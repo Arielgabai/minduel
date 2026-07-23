@@ -1,14 +1,19 @@
-// MINDUEL — Schéma de données (Prisma + SQLite en dev)
+// MINDUEL — Schéma de données (Prisma + PostgreSQL)
 // Multi-tenant : toute donnée métier porte un organizationId et est isolée côté serveur.
-// Les enums SQLite sont représentés par des String contraints applicativement (voir src/lib/enums.ts).
+// Les enums sont représentés par des String contraints applicativement (voir src/lib/enums.ts)
+// afin de rester portables et d'éviter des migrations lourdes ; les horodatages sont
+// stockés en ISO 8601 (String) et traités comme tels dans toute l'application.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
+  // Pour un fournisseur utilisant un pooler (Neon, Supabase, PgBouncer…),
+  // décommentez la ligne suivante et définissez DIRECT_URL pour les migrations :
+  // directUrl = env("DIRECT_URL")
 }
 
 model Organization {
@@ -333,4 +338,28 @@ model AuditEvent {
 
   @@index([organizationId])
   @@index([action])
+}
+
+// File de tâches persistante (PostgreSQL) pour les traitements longs/asynchrones.
+// Consommée par un worker séparé (`npm run worker`) avec verrouillage
+// (SELECT ... FOR UPDATE SKIP LOCKED), retries et backoff.
+// L'unicité (type, targetId) garantit l'idempotence : une seule tâche active par cible.
+model ProcessingJob {
+  id             String  @id @default(uuid())
+  organizationId String
+  type           String // RECORDING_PIPELINE | ...
+  targetId       String // ex : id de CallRecording
+  status         String  @default("PENDING") // PENDING | RUNNING | COMPLETED | FAILED
+  attempts       Int     @default(0)
+  maxAttempts    Int     @default(5)
+  runAfter       DateTime @default(now()) // backoff : ne pas exécuter avant cette date
+  lockedAt       DateTime?
+  lockedBy       String?
+  lastError      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([type, targetId])
+  @@index([status, runAfter])
+  @@index([organizationId])
 }

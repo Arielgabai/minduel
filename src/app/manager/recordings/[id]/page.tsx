@@ -41,7 +41,7 @@ export default async function RecordingDetail({
     : [];
   const tags = parseJson<string[]>(rec.tags, []);
   const audioUrl = rec.storageKey
-    ? await getAudioStorage().getSignedUrl(rec.storageKey, 600)
+    ? await getAudioStorage().createDownloadUrl(rec.storageKey, 600)
     : null;
 
   return (

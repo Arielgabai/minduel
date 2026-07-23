@@ -1,8 +1,15 @@
-import { handle, ok } from "@/lib/api";
+import { handle, ok, fail } from "@/lib/api";
 import { requireManager } from "@/lib/auth";
-import { advanceRecording } from "@/lib/recordingService";
+import { prisma } from "@/lib/db";
+import { enqueueJob, kickJob, JobType } from "@/lib/jobs";
 
-/** Fait avancer le pipeline d'une étape (le client peut poller jusqu'à READY/FAILED). */
+/**
+ * Fait avancer le traitement d'un enregistrement puis renvoie son statut.
+ * En production, le worker traite la file en continu ; cet endpoint (utilisé par
+ * le polling client) déclenche aussi un traitement EN LIGNE best-effort afin que
+ * le dev local fonctionne sans worker séparé. Le verrouillage de la file empêche
+ * tout double traitement.
+ */
 export async function POST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -10,7 +17,25 @@ export async function POST(
   return handle(async () => {
     const manager = await requireManager();
     const { id } = await params;
-    const result = await advanceRecording(id, manager.organizationId);
-    return ok(result);
+
+    const rec = await prisma.callRecording.findFirst({
+      where: { id, organizationId: manager.organizationId },
+      select: { id: true, status: true },
+    });
+    if (!rec) return fail(404, "Enregistrement introuvable.");
+
+    // S'assure qu'une tâche existe (idempotent) puis tente de l'exécuter en ligne.
+    await enqueueJob({
+      organizationId: manager.organizationId,
+      type: JobType.RECORDING_PIPELINE,
+      targetId: id,
+    });
+    await kickJob({ type: JobType.RECORDING_PIPELINE, targetId: id });
+
+    const updated = await prisma.callRecording.findFirst({
+      where: { id, organizationId: manager.organizationId },
+      select: { status: true },
+    });
+    return ok({ status: updated?.status ?? rec.status });
   });
 }

@@ -12,7 +12,13 @@ const compat = new FlatCompat({
 const eslintConfig = [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
-    ignores: [".next/**", "node_modules/**", "prisma/generated/**"],
+    // Fichiers CommonJS (lanceur du worker) : require() est légitime ici.
+    ignores: [
+      ".next/**",
+      "node_modules/**",
+      "prisma/generated/**",
+      "**/*.cjs",
+    ],
   },
 ];
 

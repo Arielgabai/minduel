@@ -1,0 +1,29 @@
+node_modules
+.next
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+!.env.production.example
+storage
+.storage
+uploads
+*.db
+*.db-journal
+*.log
+npm-debug.log*
+corp-ca-bundle.pem
+*.pem
+# Exception : CA d'entreprise fournie localement pour les builds derrière un
+# proxy MITM (jamais commitée ; absente sur les hébergeurs cloud comme Render).
+!docker/ca/*.pem
+docs
+maquette_inspi
+README.md
+prompt-cursor-mvp-minduel.md
+.vscode
+.idea
+Dockerfile
+docker-compose.yml
+.dockerignore

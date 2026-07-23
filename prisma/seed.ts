@@ -7,6 +7,7 @@
  *
  * Idempotent : purge l'organisation démo puis la recrée.
  */
+import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -15,6 +16,25 @@ const prisma = new PrismaClient();
 
 const DEMO_SLUG = "demo-minduel";
 const PWD = "demo1234";
+
+/**
+ * Garde-fou : le seed de démonstration crée des comptes avec un mot de passe
+ * public (demo1234). Il REFUSE de s'exécuter en production sauf si
+ * ALLOW_DEMO_SEED=true est défini explicitement (démo assumée).
+ */
+function assertSeedAllowed(): void {
+  const isProd = process.env.NODE_ENV === "production";
+  const allowed = ["true", "1", "yes"].includes(
+    (process.env.ALLOW_DEMO_SEED ?? "").toLowerCase(),
+  );
+  if (isProd && !allowed) {
+    console.error(
+      "⛔ Seed de démonstration refusé en production.\n" +
+        "   Définissez ALLOW_DEMO_SEED=true UNIQUEMENT pour un environnement de démonstration assumé.",
+    );
+    process.exit(1);
+  }
+}
 
 function iso(daysAgo = 0): string {
   return new Date(Date.now() - daysAgo * 864e5).toISOString();
@@ -35,6 +55,7 @@ const RUBRIC = [
 ];
 
 async function main() {
+  assertSeedAllowed();
   const hash = await bcrypt.hash(PWD, 10);
 
   // Purge de l'organisation démo existante (cascade).
