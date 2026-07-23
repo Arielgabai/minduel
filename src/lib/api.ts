@@ -3,10 +3,18 @@ import { NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { ZodError } from "zod";
 import { HttpError } from "./auth";
+import { log, safeErrorMessage } from "./log";
 
 /** Identifiant de corrélation ajouté aux logs et réponses d'erreur. */
 export function correlationId(): string {
   return randomBytes(8).toString("hex");
+}
+
+/** Adresse IP cliente (derrière un reverse proxy HTTPS), best-effort. */
+export function getClientIp(req: Request): string {
+  const xff = req.headers.get("x-forwarded-for");
+  if (xff) return xff.split(",")[0]!.trim();
+  return req.headers.get("x-real-ip")?.trim() || "unknown";
 }
 
 export function ok<T>(data: T, status = 200): NextResponse {
@@ -37,7 +45,7 @@ export async function handle(
       return fail(422, msg || "Données invalides.", cid);
     }
     // Journaliser sans exposer le détail interne ni le contenu sensible.
-    console.error(`[minduel][${cid}]`, err instanceof Error ? err.message : err);
+    log.error("api.error", { correlationId: cid, error: safeErrorMessage(err) });
     return fail(500, "Une erreur interne est survenue.", cid);
   }
 }

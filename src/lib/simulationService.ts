@@ -7,7 +7,7 @@ import {
   demoProspectReply,
   type ScenarioForSim,
 } from "./simulation";
-import { getEvaluationProvider } from "./providers";
+import { getEvaluationProvider, EvaluationResultSchema } from "./providers";
 import { DEFAULT_RUBRIC, type RubricCriterion } from "./rubric";
 import { SimulationStatus } from "./enums";
 
@@ -147,12 +147,16 @@ export async function finalizeSimulation(input: {
 
   const turns = sim.turns.map((t) => ({ role: t.role, content: t.content, atMs: t.atMs }));
 
-  const result = await getEvaluationProvider().evaluate({
-    turns,
-    rubric: rubric.map((c) => ({ key: c.key, label: c.label, weight: c.weight })),
-    scenarioLevel: sim.scenario.level,
-    seed: sim.id,
-  });
+  // Validation Zod de la sortie AVANT toute écriture : un échec ou une réponse
+  // malformée ne peut pas enregistrer une évaluation partielle comme réussie.
+  const result = EvaluationResultSchema.parse(
+    await getEvaluationProvider().evaluate({
+      turns,
+      rubric: rubric.map((c) => ({ key: c.key, label: c.label, weight: c.weight })),
+      scenarioLevel: sim.scenario.level,
+      seed: sim.id,
+    }),
+  );
 
   const now = nowIso();
   const evaluation = await prisma.simulationEvaluation.create({

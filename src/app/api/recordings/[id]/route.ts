@@ -6,6 +6,7 @@ import { getAudioStorage } from "@/lib/providers";
 import { nowIso } from "@/lib/utils";
 import { RecordingStatus } from "@/lib/enums";
 import { logAudit } from "@/lib/audit";
+import { enqueueJob, JobType } from "@/lib/jobs";
 
 const patchSchema = z.object({
   enabled: z.boolean().optional(),
@@ -34,6 +35,12 @@ export async function PATCH(
       await prisma.callRecording.update({
         where: { id },
         data: { status: RecordingStatus.UPLOADED, errorMessage: null, updatedAt: nowIso() },
+      });
+      // Re-planifie le traitement dans la file persistante.
+      await enqueueJob({
+        organizationId: manager.organizationId,
+        type: JobType.RECORDING_PIPELINE,
+        targetId: id,
       });
       return ok({ status: RecordingStatus.UPLOADED });
     }
@@ -66,7 +73,7 @@ export async function DELETE(
 
     // Suppression réelle du fichier audio du stockage privé.
     if (rec.storageKey) {
-      await getAudioStorage().remove(rec.storageKey);
+      await getAudioStorage().deleteObject(rec.storageKey);
     }
 
     // Suppression en cascade du transcript et des connaissances dérivées

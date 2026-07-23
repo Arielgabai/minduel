@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { requireManager } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { formatDateTimeFr } from "@/lib/utils";
+import { rateLimit } from "@/lib/ratelimit";
 
 function csvEscape(value: string): string {
   if (/[",\n;]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
@@ -10,6 +11,13 @@ function csvEscape(value: string): string {
 
 export async function GET() {
   const manager = await requireManager();
+
+  // Limitation de débit sur l'export (endpoint potentiellement coûteux).
+  if (!rateLimit(`export:${manager.id}`, 10, 60_000).allowed) {
+    return new Response("Trop d'exports. Réessaie dans une minute.", {
+      status: 429,
+    });
+  }
 
   const sims = await prisma.simulation.findMany({
     where: { organizationId: manager.organizationId, status: "COMPLETED" },

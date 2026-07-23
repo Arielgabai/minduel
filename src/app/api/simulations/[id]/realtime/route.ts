@@ -1,8 +1,10 @@
-import { handle, ok } from "@/lib/api";
+import { handle, ok, fail } from "@/lib/api";
 import { requireTelepro } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getRealtimeSessionProvider } from "@/lib/providers";
 import { getPersonaForScenario } from "@/lib/simulationService";
+import { rateLimit } from "@/lib/ratelimit";
+import { log } from "@/lib/log";
 
 /**
  * Négocie une session Realtime. En mode réel, retourne un secret client
@@ -17,6 +19,13 @@ export async function POST(
     const user = await requireTelepro();
     const { id } = await params;
 
+    // Limitation de débit : empêche la création répétée de sessions coûteuses.
+    const rl = rateLimit(`realtime:${user.id}`, 10, 60_000);
+    if (!rl.allowed) {
+      return fail(429, "Trop de sessions demandées. Réessaie dans une minute.");
+    }
+
+    // Isolation : la simulation doit appartenir au télépro ET à son organisation.
     const sim = await prisma.simulation.findFirstOrThrow({
       where: { id, organizationId: user.organizationId, teleproId: user.id },
     });
@@ -29,6 +38,12 @@ export async function POST(
 
     const session = await getRealtimeSessionProvider().createEphemeralSession({
       instructions: persona,
+    });
+    log.info("realtime.session_created", {
+      organizationId: user.organizationId,
+      userId: user.id,
+      simulationId: id,
+      demo: session.demo,
     });
 
     // Ne jamais renvoyer la persona brute contenant les infos secrètes au client

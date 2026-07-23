@@ -1,0 +1,87 @@
+# MINDUEL — orchestration locale (db + web + worker).
+#
+# Dev habituel (Postgres seul, app lancée avec `npm run dev` sur l'hôte) :
+#   docker compose up -d db
+#   npm install && npm run db:migrate && npm run db:seed:demo && npm run dev
+#
+# Validation complète en conteneurs (image de production, 3 services) :
+#   docker compose up --build -d
+#   → db (healthy) + web (migre puis sert) + worker (traitements async)
+#
+# Les services partagent le réseau Compose par défaut ; DATABASE_URL cible le
+# hostname `db` (jamais localhost) depuis web et worker.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: minduel
+      POSTGRES_PASSWORD: minduel
+      POSTGRES_DB: minduel
+    # Port hôte 5433 pour éviter tout conflit avec un PostgreSQL déjà installé
+    # localement sur 5432. À l'intérieur du réseau Docker, le port reste 5432.
+    ports:
+      - "5433:5432"
+    volumes:
+      - minduel_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U minduel -d minduel"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # --- Serveur web (applique les migrations au démarrage puis sert) ---
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      APP_URL: http://localhost:3000
+      DATABASE_URL: postgresql://minduel:minduel@db:5432/minduel?schema=public
+      SESSION_SECRET: local-docker-session-secret-change-me-32chars-min
+      AI_PROVIDER: demo
+      STORAGE_DRIVER: local
+      ALLOW_DEMO_SEED: "true"
+      PORT: "3000"
+    ports:
+      - "3000:3000"
+    # Applique les migrations puis démarre le serveur web.
+    command: sh -c "npm run db:migrate:deploy && npm run start"
+
+  # --- Worker de traitements asynchrones (process séparé) ---
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://minduel:minduel@db:5432/minduel?schema=public
+      SESSION_SECRET: local-docker-session-secret-change-me-32chars-min
+      AI_PROVIDER: demo
+      STORAGE_DRIVER: local
+      WORKER_HEARTBEAT_FILE: /tmp/minduel-worker-heartbeat
+    command: sh -c "npm run worker"
+    # Le worker n'est PAS un serveur HTTP : on remplace le HEALTHCHECK de l'image
+    # (qui interroge /api/health) par une sonde de liveness basée sur la fraîcheur
+    # du fichier de heartbeat écrit par le worker (< 90s = vivant).
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - test -f "$${WORKER_HEARTBEAT_FILE}" && [ $$(( $$(date +%s) - $$(stat -c %Y "$${WORKER_HEARTBEAT_FILE}") )) -lt 90 ]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  minduel_pgdata:

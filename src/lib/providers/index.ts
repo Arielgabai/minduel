@@ -14,25 +14,48 @@ import type {
   TranscriptionProvider,
 } from "./types";
 
-export { getAudioStorage, verifyStorageSignature } from "./storage";
+export {
+  getAudioStorage,
+  verifyStorageSignature,
+  isPersistentStorageConfigured,
+} from "./storage";
 export * from "./types";
+export { EvaluationResultSchema } from "./schemas";
 
-// Sélecteurs de providers : le mode démo passe par les mêmes interfaces que le réel.
-// Pour le MVP, transcription / extraction / évaluation utilisent l'implémentation
-// déterministe (démo). La session Realtime bascule sur OpenAI dès qu'une clé existe.
+/**
+ * Sélecteurs de providers — séparation EXPLICITE démo / réel (aucune bascule
+ * silencieuse).
+ *
+ * État réel des intégrations (audité, sans se fier aux commentaires historiques) :
+ * - Realtime (voix) : implémentation OpenAI RÉELLE via secret éphémère.
+ * - Transcription / Extraction / Évaluation : implémentations DÉMO déterministes.
+ *   Les versions OpenAI réelles NE SONT PAS encore implémentées. En mode
+ *   AI_PROVIDER=openai, ces providers lèvent une erreur claire plutôt que de
+ *   retomber silencieusement sur la démo (ce qui masquerait l'état réel).
+ */
+
+class NotImplementedProviderError extends Error {
+  constructor(what: string) {
+    super(
+      `${what} n'est pas encore implémenté pour AI_PROVIDER=openai. ` +
+        `Utilisez AI_PROVIDER=demo, ou implémentez le provider OpenAI correspondant.`,
+    );
+  }
+}
 
 export function getTranscriptionProvider(): TranscriptionProvider {
-  // Un provider OpenAI (whisper) pourra être branché ici en mode réel.
-  return demoTranscription;
+  if (isDemoMode()) return demoTranscription;
+  throw new NotImplementedProviderError("La transcription OpenAI");
 }
 
 export function getKnowledgeExtractionProvider(): KnowledgeExtractionProvider {
-  return demoKnowledgeExtraction;
+  if (isDemoMode()) return demoKnowledgeExtraction;
+  throw new NotImplementedProviderError("L'extraction de connaissances OpenAI");
 }
 
 export function getEvaluationProvider(): EvaluationProvider {
-  // Une évaluation OpenAI structurée (JSON validé) pourra être branchée ici.
-  return demoEvaluation;
+  if (isDemoMode()) return demoEvaluation;
+  throw new NotImplementedProviderError("L'évaluation OpenAI");
 }
 
 export function getRealtimeSessionProvider(): RealtimeSessionProvider {

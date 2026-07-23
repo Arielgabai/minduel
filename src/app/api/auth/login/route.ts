@@ -1,9 +1,11 @@
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { handle, ok, fail } from "@/lib/api";
+import { handle, ok, fail, getClientIp } from "@/lib/api";
 import { verifyPassword, createSession } from "@/lib/auth";
 import { Role } from "@/lib/enums";
 import { dayKey, nowIso } from "@/lib/utils";
+import { rateLimit } from "@/lib/ratelimit";
+import { log } from "@/lib/log";
 
 const schema = z.object({
   email: z.string().email(),
@@ -14,6 +16,15 @@ export async function POST(req: Request) {
   return handle(async () => {
     const body = schema.parse(await req.json());
     const email = body.email.toLowerCase().trim();
+
+    // Limitation de débit anti-force brute : par IP et par compte ciblé.
+    const ip = getClientIp(req);
+    if (!rateLimit(`login-ip:${ip}`, 30, 300_000).allowed) {
+      return fail(429, "Trop de tentatives. Réessaie dans quelques minutes.");
+    }
+    if (!rateLimit(`login-email:${email}`, 10, 300_000).allowed) {
+      return fail(429, "Trop de tentatives. Réessaie dans quelques minutes.");
+    }
 
     const user = await prisma.user.findUnique({
       where: { email },
@@ -42,6 +53,11 @@ export async function POST(req: Request) {
     }
 
     await createSession(user.id);
+    log.info("auth.login", {
+      userId: user.id,
+      organizationId: user.organizationId,
+      role: user.role,
+    });
     const redirect =
       user.role === Role.MANAGER || user.role === Role.PLATFORM_ADMIN
         ? "/manager"

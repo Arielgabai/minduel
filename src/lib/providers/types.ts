@@ -20,15 +20,32 @@ export interface KnowledgeDraft {
 }
 
 // ---- AudioStorageProvider : stockage privé des enregistrements ----
+export interface StoredObjectInfo {
+  exists: boolean;
+  size?: number;
+  contentType?: string;
+}
+
 export interface AudioStorageProvider {
-  /** Écrit un buffer et retourne la clé de stockage privée. */
-  put(key: string, data: Buffer, mimeType: string): Promise<void>;
-  /** Retourne une URL signée temporaire pour lire le fichier. */
-  getSignedUrl(key: string, expiresInSec?: number): Promise<string>;
-  /** Lit le contenu (usage serveur uniquement). */
+  /** Écrit un objet côté serveur (dev local + passerelle S3 pour fichiers ≤ limite). */
+  put(key: string, data: Buffer, contentType: string): Promise<void>;
+  /** URL de TÉLÉCHARGEMENT temporaire (locale signée ou pré-signée S3). */
+  createDownloadUrl(key: string, ttlSec?: number): Promise<string>;
+  /** Métadonnées / existence d'un objet (jamais son contenu). */
+  headObject(key: string): Promise<StoredObjectInfo>;
+  /** Supprime réellement l'objet. */
+  deleteObject(key: string): Promise<void>;
+  /** Lecture serveur du contenu (utilisé par la route de lecture en mode local). */
   get(key: string): Promise<Buffer | null>;
-  /** Supprime réellement le fichier. */
-  remove(key: string): Promise<void>;
+  /**
+   * URL d'UPLOAD direct pré-signée (optionnelle : implémentée par S3).
+   * Permet, à terme, d'uploader sans faire transiter le fichier par Next.js.
+   */
+  createUploadUrl?(
+    key: string,
+    contentType: string,
+    ttlSec?: number,
+  ): Promise<string>;
 }
 
 // ---- TranscriptionProvider : audio -> transcript diarisé ----
