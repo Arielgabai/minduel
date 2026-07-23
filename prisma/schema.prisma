@@ -1,0 +1,336 @@
+// MINDUEL — Schéma de données (Prisma + SQLite en dev)
+// Multi-tenant : toute donnée métier porte un organizationId et est isolée côté serveur.
+// Les enums SQLite sont représentés par des String contraints applicativement (voir src/lib/enums.ts).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  isActive  Boolean  @default(true)
+  isDemo    Boolean  @default(false)
+  // Réglages de confidentialité / conservation
+  retentionDays        Int     @default(90)
+  allowManagerPlayback Boolean @default(true)
+  createdAt String
+  updatedAt String
+
+  memberships      TeamMembership[]
+  users            User[]
+  programs         TrainingProgram[]
+  scenarios        Scenario[]
+  recordings       CallRecording[]
+  knowledgeItems   KnowledgeItem[]
+  rubrics          EvaluationRubric[]
+  simulations      Simulation[]
+  auditEvents      AuditEvent[]
+  assignments      ScenarioAssignment[]
+
+  @@index([slug])
+}
+
+model User {
+  id             String  @id @default(uuid())
+  organizationId String?
+  email          String  @unique
+  passwordHash   String
+  fullName       String
+  // PLATFORM_ADMIN | MANAGER | TELEPRO
+  role           String  @default("TELEPRO")
+  isActive       Boolean @default(true)
+  // Mot de passe temporaire affiché au manager (invitation simulée)
+  tempPassword   String?
+  streakDays     Int     @default(0)
+  lastActiveDay  String?
+  createdAt      String
+  updatedAt      String
+
+  organization       Organization?        @relation(fields: [organizationId], references: [id])
+  membership         TeamMembership?
+  createdScenarios   Scenario[]           @relation("ScenarioAuthor")
+  assignmentsAsTelepro ScenarioAssignment[] @relation("AssignmentTelepro")
+  assignmentsAsManager ScenarioAssignment[] @relation("AssignmentManager")
+  uploadedRecordings CallRecording[]
+  simulations        Simulation[]
+  auditEvents        AuditEvent[]
+  sessions           Session[]
+
+  @@index([organizationId])
+  @@index([email])
+}
+
+model Session {
+  id        String @id @default(uuid())
+  userId    String
+  token     String @unique
+  expiresAt String
+  createdAt String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+}
+
+model TeamMembership {
+  id             String @id @default(uuid())
+  organizationId String
+  userId         String @unique
+  role           String @default("TELEPRO")
+  createdAt      String
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+}
+
+model TrainingProgram {
+  id             String @id @default(uuid())
+  organizationId String
+  name           String
+  description    String?
+  createdAt      String
+  updatedAt      String
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scenarios    Scenario[]
+
+  @@index([organizationId])
+}
+
+model Scenario {
+  id             String  @id @default(uuid())
+  organizationId String
+  programId      String?
+  authorId       String?
+  name           String
+  campaign       String?
+  callType       String  @default("VENTE") // VENTE | PITCH_INVESTISSEUR | ENTRETIEN_EMBAUCHE
+  offer          String?
+  prospectProfile String?
+  initialSituation String?
+  objective      String?
+  level          String  @default("MOYEN") // FACILE | MOYEN | DIFFICILE
+  personality    String?
+  // JSON stringifiés
+  allowedObjections String?  // string[]
+  secretInfos       String?  // {question, answer}[]
+  successConditions String?
+  failureConditions String?
+  targetDurationSec Int      @default(300)
+  status         String  @default("DRAFT") // DRAFT | PUBLISHED
+  // Références aux connaissances approuvées injectées
+  knowledgeRefs  String?  // string[] d'ids KnowledgeItem
+  createdAt      String
+  updatedAt      String
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  program      TrainingProgram?     @relation(fields: [programId], references: [id])
+  author       User?                @relation("ScenarioAuthor", fields: [authorId], references: [id])
+  rubric       EvaluationRubric?
+  assignments  ScenarioAssignment[]
+  simulations  Simulation[]
+
+  @@index([organizationId])
+  @@index([status])
+}
+
+model ScenarioAssignment {
+  id             String @id @default(uuid())
+  organizationId String
+  scenarioId     String
+  teleproId      String
+  managerId      String?
+  status         String @default("ASSIGNED") // ASSIGNED | IN_PROGRESS | COMPLETED
+  createdAt      String
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scenario     Scenario     @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  telepro      User         @relation("AssignmentTelepro", fields: [teleproId], references: [id], onDelete: Cascade)
+  manager      User?        @relation("AssignmentManager", fields: [managerId], references: [id])
+
+  @@unique([scenarioId, teleproId])
+  @@index([organizationId])
+  @@index([teleproId])
+}
+
+model CallRecording {
+  id             String  @id @default(uuid())
+  organizationId String
+  uploaderId     String?
+  title          String
+  campaign       String?
+  callOutcome    String? // VENTE | REFUS | RAPPEL | RDV | AUTRE
+  language       String  @default("fr")
+  tags           String? // JSON string[]
+  managerNote    String?
+  consent        Boolean @default(false)
+  storageKey     String? // clé de stockage privé (jamais public)
+  mimeType       String?
+  sizeBytes      Int     @default(0)
+  durationSec    Int     @default(0)
+  status         String  @default("UPLOADED") // UPLOADED | TRANSCRIBING | ANALYZING | READY | FAILED
+  errorMessage   String?
+  enabled        Boolean @default(true)
+  processingHash String? // idempotence
+  createdAt      String
+  updatedAt      String
+
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  uploader       User?           @relation(fields: [uploaderId], references: [id])
+  transcript     Transcript?
+  knowledgeItems KnowledgeItem[]
+
+  @@index([organizationId])
+  @@index([status])
+}
+
+model Transcript {
+  id          String @id @default(uuid())
+  recordingId String @unique
+  language    String @default("fr")
+  // JSON: [{speaker:"AGENT"|"PROSPECT", text, startMs, endMs}]
+  segments    String
+  createdAt   String
+
+  recording CallRecording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+}
+
+model KnowledgeItem {
+  id             String  @id @default(uuid())
+  organizationId String
+  recordingId    String?
+  type           String  // OBJECTION | GOOD_PRACTICE | BAD_PRACTICE | DISCOVERY_QUESTION | VOCABULARY | SCRIPT_STEP | COMPLIANCE_RULE
+  title          String
+  content        String
+  sourceExcerpt  String?
+  startMs        Int     @default(0)
+  endMs          Int     @default(0)
+  confidence     Float   @default(0)
+  reviewStatus   String  @default("PENDING") // PENDING | APPROVED | REJECTED
+  enabled        Boolean @default(true)
+  createdAt      String
+  updatedAt      String
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  recording    CallRecording? @relation(fields: [recordingId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([reviewStatus])
+}
+
+model EvaluationRubric {
+  id             String @id @default(uuid())
+  organizationId String
+  scenarioId     String? @unique
+  name           String  @default("Grille par défaut")
+  // JSON: [{key, label, weight}] total 100
+  criteria       String
+  createdAt      String
+  updatedAt      String
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scenario     Scenario?    @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+model Simulation {
+  id             String  @id @default(uuid())
+  organizationId String
+  scenarioId     String
+  teleproId      String
+  mode           String  @default("DEMO") // DEMO | REALTIME
+  status         String  @default("CREATED") // CREATED | IN_PROGRESS | COMPLETED | ABANDONED | FAILED
+  prospectName   String?
+  startedAt      String?
+  endedAt        String?
+  durationSec    Int     @default(0)
+  outcome        String? // VENTE | REFUS | RAPPEL | RDV
+  createdAt      String
+  updatedAt      String
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scenario     Scenario             @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  telepro      User                 @relation(fields: [teleproId], references: [id], onDelete: Cascade)
+  turns        SimulationTurn[]
+  evaluation   SimulationEvaluation?
+
+  @@index([organizationId])
+  @@index([teleproId])
+  @@index([scenarioId])
+}
+
+model SimulationTurn {
+  id           String @id @default(uuid())
+  simulationId String
+  role         String // AGENT | PROSPECT | SYSTEM
+  content      String
+  atMs         Int    @default(0)
+  createdAt    String
+
+  simulation Simulation @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+
+  @@index([simulationId])
+}
+
+model SimulationEvaluation {
+  id            String @id @default(uuid())
+  simulationId  String @unique
+  overallScore  Int    @default(0)
+  summary       String?
+  // JSON strengths/improvements/advice/betterFormulation/keyMoments/outcome
+  strengths     String?
+  improvements  String?
+  advice        String?
+  betterExample String?
+  keyMoments    String?
+  outcome       String?
+  createdAt     String
+
+  simulation  Simulation   @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+  skillScores SkillScore[]
+}
+
+model SkillScore {
+  id           String @id @default(uuid())
+  evaluationId String
+  key          String
+  label        String
+  score        Int    @default(0)
+  maxScore     Int    @default(0)
+  rationale    String?
+  evidence     String?
+  recommendation String?
+
+  evaluation SimulationEvaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+
+  @@index([evaluationId])
+}
+
+model AuditEvent {
+  id             String @id @default(uuid())
+  organizationId String
+  actorId        String?
+  action         String // UPLOAD | KNOWLEDGE_APPROVE | KNOWLEDGE_REJECT | EXPORT | DELETE_RECORDING | ...
+  targetType     String?
+  targetId       String?
+  metadata       String? // JSON (jamais le contenu complet des conversations)
+  createdAt      String
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor        User?        @relation(fields: [actorId], references: [id])
+
+  @@index([organizationId])
+  @@index([action])
+}

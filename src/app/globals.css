@@ -1,0 +1,158 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------
+   MINDUEL — Design system
+   Direction artistique : fond bleu-noir profond, accents violet électrique,
+   bleu et orange, cartes sombres translucides, halos et gradients subtils.
+   ------------------------------------------------------------------ */
+
+@theme {
+  --color-ink-950: #05060f;
+  --color-ink-900: #0a0b1a;
+  --color-ink-850: #0d0f24;
+  --color-ink-800: #12142e;
+  --color-ink-700: #1b1d3a;
+  --color-ink-600: #262a52;
+
+  --color-violet-400: #a78bfa;
+  --color-violet-500: #8b5cf6;
+  --color-violet-600: #7c3aed;
+
+  --color-electric-400: #60a5fa;
+  --color-electric-500: #3b82f6;
+
+  --color-flame-400: #fb923c;
+  --color-flame-500: #f97316;
+  --color-flame-600: #ea580c;
+
+  --color-mint-400: #34d399;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background-color: var(--color-ink-950);
+  color: #e7e9f7;
+}
+
+body {
+  min-height: 100vh;
+  background-image:
+    radial-gradient(60rem 40rem at 15% -10%, rgba(124, 58, 237, 0.18), transparent 60%),
+    radial-gradient(50rem 40rem at 110% 10%, rgba(249, 115, 22, 0.12), transparent 55%),
+    radial-gradient(40rem 30rem at 50% 120%, rgba(59, 130, 246, 0.12), transparent 60%);
+  background-attachment: fixed;
+}
+
+/* Cartes sombres translucides avec bordure fine et halo discret */
+.card {
+  background: linear-gradient(180deg, rgba(19, 21, 46, 0.72), rgba(10, 11, 26, 0.72));
+  border: 1px solid rgba(139, 92, 246, 0.14);
+  border-radius: 1rem;
+  backdrop-filter: blur(10px);
+}
+
+.card-hover {
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card-hover:hover {
+  border-color: rgba(139, 92, 246, 0.4);
+  box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.18), 0 12px 40px -12px rgba(124, 58, 237, 0.4);
+  transform: translateY(-2px);
+}
+
+/* Dégradé de marque réutilisable */
+.text-gradient {
+  background: linear-gradient(100deg, #a78bfa 0%, #60a5fa 50%, #fb923c 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.btn-gradient {
+  background: linear-gradient(100deg, #7c3aed 0%, #6d28d9 55%, #4f46e5 100%);
+  box-shadow: 0 10px 30px -10px rgba(124, 58, 237, 0.7);
+}
+.btn-gradient:hover {
+  filter: brightness(1.08);
+}
+
+.btn-flame {
+  background: linear-gradient(100deg, #7c3aed 0%, #f97316 120%);
+  box-shadow: 0 10px 30px -10px rgba(249, 115, 22, 0.6);
+}
+
+/* Halo lumineux pour boutons/éléments actifs */
+.glow-violet {
+  box-shadow: 0 0 40px -8px rgba(124, 58, 237, 0.55);
+}
+.glow-flame {
+  box-shadow: 0 0 40px -8px rgba(249, 115, 22, 0.5);
+}
+
+/* États focus accessibles et visibles */
+*:focus-visible {
+  outline: 2px solid var(--color-violet-400);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Scrollbar discrète */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.25);
+  border-radius: 999px;
+}
+
+/* Animations discrètes */
+@keyframes pulse-ring {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.03); }
+}
+.animate-pulse-ring {
+  animation: pulse-ring 2.4s ease-in-out infinite;
+}
+
+@keyframes rotate-slow {
+  to { transform: rotate(360deg); }
+}
+.animate-rotate-slow {
+  animation: rotate-slow 8s linear infinite;
+}
+
+@keyframes wave {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up {
+  animation: fade-up 0.4s ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Bandeau mode démo */
+.demo-banner {
+  background: linear-gradient(90deg, rgba(124, 58, 237, 0.16), rgba(249, 115, 22, 0.12));
+  border-bottom: 1px solid rgba(139, 92, 246, 0.2);
+}
