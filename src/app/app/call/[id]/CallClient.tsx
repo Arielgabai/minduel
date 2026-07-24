@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Waveform } from "@/components/Waveform";
 import { LEVEL_LABELS } from "@/lib/enums";
 import { cx, formatDuration } from "@/lib/utils";
+import { RealtimeCallClient } from "./RealtimeCallClient";
 
 type Turn = { role: string; content: string };
 type CallState =
@@ -32,7 +33,18 @@ const STATE_LABEL: Record<CallState, string> = {
   ended: "Terminé",
 };
 
+/**
+ * Point d'entrée de la page d'appel.
+ * - Mode démo (déterministe) : flux textuel + voix du navigateur (ci-dessous).
+ * - Mode réel (AI_PROVIDER=openai) : délègue à RealtimeCallClient, qui établit
+ *   une véritable session vocale OpenAI en speech-to-speech via WebRTC.
+ */
 export function CallClient(props: Props) {
+  if (!props.demo) return <RealtimeCallClient {...props} />;
+  return <DemoCallClient {...props} />;
+}
+
+function DemoCallClient(props: Props) {
   const router = useRouter();
   const [turns, setTurns] = useState<Turn[]>(props.initialTurns);
   const [state, setState] = useState<CallState>("connecting");

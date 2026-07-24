@@ -106,6 +106,46 @@ export async function processTurn(input: {
   return { prospect: reply.content, shouldEnd: reply.shouldEnd, outcome: reply.outcome };
 }
 
+/**
+ * Ajoute un tour issu d'une session Realtime (voix) SANS générer de réponse.
+ *
+ * En mode temps réel, la conversation se déroule entièrement via WebRTC entre le
+ * navigateur et OpenAI : le prospect (modèle) répond directement en audio. On se
+ * contente donc d'ARCHIVER les transcripts (agent via transcription du micro,
+ * prospect via `response.output_audio_transcript`) pour l'historique et l'analyse.
+ * Contrairement à `processTurn`, cette fonction n'appelle aucun provider et ne
+ * fabrique aucune réplique.
+ */
+export async function appendRealtimeTurn(input: {
+  simulationId: string;
+  organizationId: string;
+  role: "AGENT" | "PROSPECT";
+  content: string;
+}): Promise<void> {
+  const sim = await prisma.simulation.findFirstOrThrow({
+    where: { id: input.simulationId, organizationId: input.organizationId },
+    include: { turns: { orderBy: { atMs: "desc" }, take: 1 } },
+  });
+
+  const lastMs = sim.turns[0]?.atMs ?? 0;
+  await prisma.simulationTurn.create({
+    data: {
+      simulationId: sim.id,
+      role: input.role,
+      content: input.content,
+      atMs: lastMs + 3000,
+      createdAt: nowIso(),
+    },
+  });
+
+  if (sim.status === SimulationStatus.CREATED) {
+    await prisma.simulation.update({
+      where: { id: sim.id },
+      data: { status: SimulationStatus.IN_PROGRESS, updatedAt: nowIso() },
+    });
+  }
+}
+
 /** Finalise la simulation et lance l'évaluation serveur structurée. */
 export async function finalizeSimulation(input: {
   simulationId: string;
