@@ -65,6 +65,25 @@ export function ManagerNav({
   );
 }
 
+export function ManagerMobileHeader({ userName }: { userName: string }) {
+  return (
+    <header className="sticky top-0 z-40 flex items-center justify-between gap-3 border-b border-white/10 bg-ink-900/90 px-4 py-3 backdrop-blur lg:hidden">
+      <Link href="/manager" className="flex min-w-0 items-center gap-2">
+        <LogoMark size={28} />
+        <span className="truncate text-sm font-bold tracking-[0.15em]">
+          MIN<span className="text-gradient">DUEL</span>
+        </span>
+      </Link>
+      <div className="flex items-center gap-3">
+        <span className="hidden max-w-[8rem] truncate text-xs text-white/45 sm:inline">
+          {userName}
+        </span>
+        <LogoutButton className="shrink-0 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/70 hover:bg-white/10" />
+      </div>
+    </header>
+  );
+}
+
 export function ManagerMobileNav() {
   const pathname = usePathname();
   return (
