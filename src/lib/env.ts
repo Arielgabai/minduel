@@ -53,10 +53,13 @@ const rawSchema = z
     // Fournisseur d'IA : "demo" (déterministe, aucun appel payant) ou "openai".
     AI_PROVIDER: z.enum(["demo", "openai"]).default("demo"),
     OPENAI_API_KEY: z.string().optional(),
-    OPENAI_REALTIME_MODEL: z.string().default("gpt-4o-realtime-preview"),
+    // Modèle Realtime GA (speech-to-speech WebRTC). "gpt-realtime" est le modèle
+    // GA compatible avec l'endpoint /v1/realtime/client_secrets ({type:"realtime"}).
+    OPENAI_REALTIME_MODEL: z.string().default("gpt-realtime"),
     OPENAI_TRANSCRIPTION_MODEL: z.string().default("whisper-1"),
     OPENAI_EVALUATION_MODEL: z.string().default("gpt-4o-mini"),
-    OPENAI_REALTIME_VOICE: z.string().default("verse"),
+    // Voix de sortie GA (ex. marin, cedar, alloy…). Modifiable via l'environnement.
+    OPENAI_REALTIME_VOICE: z.string().default("marin"),
 
     // Pilote de stockage des fichiers audio : "local" (dev) ou "s3" (prod).
     STORAGE_DRIVER: z.enum(["local", "s3"]).default("local"),

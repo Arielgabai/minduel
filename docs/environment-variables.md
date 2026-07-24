@@ -22,10 +22,10 @@ Généré à partir des usages réels du code (`src/lib/env.ts`, `src/lib/config
 | `SESSION_SECRET` | **Oui** (≥ 32 car.) | tous | **Oui** | `openssl rand -base64 48` | Signature des sessions et des URLs de stockage locales. Le secret par défaut est **interdit** en production. |
 | `AI_PROVIDER` | Non (défaut `demo`) | tous | Non | `demo` \| `openai` | Sélectionne le fournisseur d'IA. `openai` exige `OPENAI_API_KEY`. |
 | `OPENAI_API_KEY` | **Conditionnel** (si `AI_PROVIDER=openai`) | prod réelle | **Oui** | `sk-...` | Clé OpenAI, lue **uniquement** côté serveur. |
-| `OPENAI_REALTIME_MODEL` | Non (défaut `gpt-4o-realtime-preview`) | tous | Non | `gpt-4o-realtime-preview` | Modèle Realtime WebRTC. |
+| `OPENAI_REALTIME_MODEL` | Non (défaut `gpt-realtime`) | tous | Non | `gpt-realtime` | Modèle Realtime GA (speech-to-speech WebRTC), compatible `/v1/realtime/client_secrets`. |
 | `OPENAI_TRANSCRIPTION_MODEL` | Non (défaut `whisper-1`) | tous | Non | `whisper-1` | Modèle de transcription (non implémenté en OpenAI, cf. limites). |
 | `OPENAI_EVALUATION_MODEL` | Non (défaut `gpt-4o-mini`) | tous | Non | `gpt-4o-mini` | Modèle d'évaluation (non implémenté en OpenAI, cf. limites). |
-| `OPENAI_REALTIME_VOICE` | Non (défaut `verse`) | tous | Non | `verse` | Voix du prospect IA Realtime. |
+| `OPENAI_REALTIME_VOICE` | Non (défaut `marin`) | tous | Non | `marin` | Voix de sortie GA du prospect IA Realtime (ex. `marin`, `cedar`, `alloy`). |
 | `STORAGE_DRIVER` | Non (défaut `local`) | tous | Non | `s3` | Pilote de stockage audio : `local` (dev) ou `s3` (prod). |
 | `AUDIO_STORAGE_DIR` | Non (défaut `./storage`) | dev (`local`) | Non | `./storage` | Répertoire de stockage local des audios (dev uniquement). |
 | `S3_BUCKET` | **Conditionnel** (si `STORAGE_DRIVER=s3`) | prod | Non | `minduel-recordings` | Bucket objet privé. |
