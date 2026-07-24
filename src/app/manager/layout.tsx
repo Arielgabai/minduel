@@ -2,7 +2,11 @@ import { redirect } from "next/navigation";
 import { getCurrentUser, isManager } from "@/lib/auth";
 import { isDemoMode } from "@/lib/config";
 import { DemoBanner } from "@/components/DemoBanner";
-import { ManagerNav, ManagerMobileNav } from "@/components/ManagerNav";
+import {
+  ManagerNav,
+  ManagerMobileNav,
+  ManagerMobileHeader,
+} from "@/components/ManagerNav";
 
 export default async function ManagerLayout({
   children,
@@ -20,6 +24,7 @@ export default async function ManagerLayout({
         userName={user.fullName}
       />
       <div className="lg:pl-64">
+        <ManagerMobileHeader userName={user.fullName} />
         <DemoBanner show={isDemoMode()} />
         <main className="mx-auto max-w-6xl px-5 py-8 pb-24 lg:pb-8">{children}</main>
       </div>
