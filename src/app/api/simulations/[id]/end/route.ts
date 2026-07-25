@@ -8,6 +8,13 @@ const schema = z.object({
   abandoned: z.boolean().optional(),
 });
 
+/**
+ * Finalise une simulation.
+ * - Abandon : renvoie une redirection vers /app (non noté).
+ * - Sinon : enfile l'évaluation (worker) et renvoie 202 + analysisUrl. Si la
+ *   simulation est déjà évaluée, renvoie 200 + analysisUrl. Le client navigue
+ *   TOUJOURS vers analysisUrl (jamais /app) après une réponse réussie.
+ */
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -24,11 +31,26 @@ export async function POST(
       abandoned: body.abandoned,
     });
 
-    return ok({
-      evaluationId: result.evaluationId,
-      redirect: result.evaluationId
-        ? `/app/analysis/${id}`
-        : "/app",
-    });
+    if (result.kind === "abandoned") {
+      return ok({ simulationId: id, abandoned: true, redirect: "/app" });
+    }
+
+    if (result.kind === "completed") {
+      return ok({
+        simulationId: id,
+        evaluationStatus: "COMPLETED",
+        analysisUrl: result.analysisUrl,
+      });
+    }
+
+    // Évaluation enfilée : 202 Accepted.
+    return ok(
+      {
+        simulationId: id,
+        evaluationStatus: "PENDING",
+        analysisUrl: result.analysisUrl,
+      },
+      202,
+    );
   });
 }

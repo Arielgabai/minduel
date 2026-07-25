@@ -5,6 +5,9 @@ import bcrypt from "bcryptjs";
 import { prisma } from "./db";
 import { nowIso } from "./utils";
 import { Role } from "./enums";
+import { HttpError } from "./httpError";
+
+export { HttpError };
 
 const SESSION_COOKIE = "minduel_session";
 const SESSION_TTL_DAYS = 7;
@@ -94,16 +97,6 @@ export function isManager(user: SessionUser | null): boolean {
 
 export function isTelepro(user: SessionUser | null): boolean {
   return user?.role === Role.TELEPRO;
-}
-
-/** Erreur métier standardisée pour les handlers d'API. */
-export class HttpError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
-    super(message);
-  }
 }
 
 /** Exige un utilisateur connecté, sinon lève une HttpError 401. */

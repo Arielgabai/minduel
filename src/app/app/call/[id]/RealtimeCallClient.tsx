@@ -39,6 +39,7 @@ export function RealtimeCallClient(props: Props) {
   const [seconds, setSeconds] = useState(0);
   const [confirmQuit, setConfirmQuit] = useState(false);
   const [ending, setEnding] = useState(false);
+  const [endError, setEndError] = useState<string | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
 
   const persistTurn = useCallback(
@@ -86,6 +87,8 @@ export function RealtimeCallClient(props: Props) {
     async (abandoned: boolean) => {
       if (ending) return;
       setEnding(true);
+      setEndError(null);
+      // Arrêt propre : micro, data channel, RTCPeerConnection, audio distant.
       stop();
       try {
         const res = await fetch(`/api/simulations/${props.simulationId}/end`, {
@@ -94,9 +97,27 @@ export function RealtimeCallClient(props: Props) {
           body: JSON.stringify({ durationSec: seconds, abandoned }),
         });
         const json = await res.json().catch(() => null);
-        router.replace(json?.data?.redirect ?? "/app");
+        if (!res.ok) {
+          // Ne JAMAIS rediriger vers /app en cas d'échec : on affiche l'erreur.
+          setEnding(false);
+          setEndError(
+            json?.error?.message ??
+              "La finalisation a \u00e9chou\u00e9. R\u00e9essaie.",
+          );
+          return;
+        }
+        const data = json?.data ?? {};
+        if (data.abandoned) {
+          router.replace(data.redirect ?? "/app");
+          return;
+        }
+        // Vers l'analyse (jamais /app) : la page d'analyse affiche la progression.
+        router.replace(data.analysisUrl ?? `/app/analysis/${props.simulationId}`);
       } catch {
-        router.replace("/app");
+        setEnding(false);
+        setEndError(
+          "La finalisation a \u00e9chou\u00e9 (r\u00e9seau). R\u00e9essaie.",
+        );
       }
     },
     [ending, props.simulationId, router, seconds, stop],
@@ -308,24 +329,39 @@ export function RealtimeCallClient(props: Props) {
               Tu peux terminer et recevoir ton analyse, ou abandonner sans
               &ecirc;tre not&eacute;.
             </p>
+            {ending && !endError && (
+              <p className="mt-3 text-sm text-electric-300">
+                Finalisation de l&apos;appel&hellip;
+              </p>
+            )}
+            {endError && (
+              <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-200">
+                {endError}
+              </p>
+            )}
             <div className="mt-5 flex flex-col gap-2">
               <button
                 onClick={() => endCall(false)}
                 disabled={ending}
-                className="btn-gradient rounded-xl px-4 py-3 text-sm font-semibold text-white"
+                className="btn-gradient rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
               >
-                Terminer et voir l&apos;analyse
+                {ending
+                  ? "Finalisation\u2026"
+                  : endError
+                    ? "R\u00e9essayer"
+                    : "Terminer et voir l'analyse"}
               </button>
               <button
                 onClick={() => endCall(true)}
                 disabled={ending}
-                className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300"
+                className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300 disabled:opacity-50"
               >
                 Abandonner (non not&eacute;)
               </button>
               <button
                 onClick={() => setConfirmQuit(false)}
-                className="rounded-xl px-4 py-2 text-sm text-white/50"
+                disabled={ending}
+                className="rounded-xl px-4 py-2 text-sm text-white/50 disabled:opacity-50"
               >
                 Continuer l&apos;appel
               </button>

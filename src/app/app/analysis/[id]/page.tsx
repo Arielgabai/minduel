@@ -5,6 +5,7 @@ import { Card, Badge, SectionTitle, LinkButton } from "@/components/ui";
 import { ScoreRing } from "@/components/ScoreRing";
 import { parseJson, formatDuration } from "@/lib/utils";
 import { OUTCOME_LABELS } from "@/lib/enums";
+import { AnalysisPending } from "./AnalysisPending";
 
 export default async function AnalysisPage({
   params,
@@ -22,7 +23,13 @@ export default async function AnalysisPage({
       turns: { orderBy: { atMs: "asc" } },
     },
   });
-  if (!sim || !sim.evaluation) notFound();
+  if (!sim) notFound();
+
+  // Évaluation pas encore prête (asynchrone via worker) : afficher la progression
+  // et interroger le statut. On ne revient JAMAIS silencieusement à l'accueil.
+  if (!sim.evaluation) {
+    return <AnalysisPending simulationId={sim.id} initialStatus={sim.status} />;
+  }
 
   const ev = sim.evaluation;
   const strengths = parseJson<string[]>(ev.strengths, []);

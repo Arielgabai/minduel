@@ -58,12 +58,24 @@ export type ReviewStatus = (typeof ReviewStatus)[keyof typeof ReviewStatus];
 export const SimulationStatus = {
   CREATED: "CREATED",
   IN_PROGRESS: "IN_PROGRESS",
+  // Étapes de finalisation / évaluation asynchrone (file ProcessingJob + worker) :
+  FINALIZING: "FINALIZING",
+  EVALUATION_PENDING: "EVALUATION_PENDING",
+  EVALUATING: "EVALUATING",
   COMPLETED: "COMPLETED",
+  EVALUATION_FAILED: "EVALUATION_FAILED",
   ABANDONED: "ABANDONED",
   FAILED: "FAILED",
 } as const;
 export type SimulationStatus =
   (typeof SimulationStatus)[keyof typeof SimulationStatus];
+
+/** Statuts pour lesquels l'évaluation est encore en cours (polling côté client). */
+export const EVALUATION_IN_PROGRESS_STATUSES: readonly string[] = [
+  SimulationStatus.FINALIZING,
+  SimulationStatus.EVALUATION_PENDING,
+  SimulationStatus.EVALUATING,
+];
 
 export const SimulationMode = {
   DEMO: "DEMO",

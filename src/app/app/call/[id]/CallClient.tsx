@@ -204,10 +204,22 @@ function DemoCallClient(props: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ durationSec: seconds, abandoned }),
       });
-      const json = await res.json();
-      router.replace(json.data?.redirect ?? "/app");
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        // Ne pas rediriger vers /app en cas d'échec : réactiver pour réessayer.
+        setEnding(false);
+        setState("your_turn");
+        return;
+      }
+      const data = json?.data ?? {};
+      if (data.abandoned) {
+        router.replace(data.redirect ?? "/app");
+        return;
+      }
+      router.replace(data.analysisUrl ?? `/app/analysis/${props.simulationId}`);
     } catch {
-      router.replace("/app");
+      setEnding(false);
+      setState("your_turn");
     }
   }
 

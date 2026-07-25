@@ -110,11 +110,27 @@ export interface EvaluationResult {
   skillScores: SkillScoreResult[];
 }
 
+export interface EvaluationContextKnowledge {
+  type: string;
+  title: string;
+  content: string;
+}
+
+export interface EvaluationInput {
+  turns: Array<{ role: string; content: string; atMs: number }>;
+  rubric: RubricScoreInput[];
+  scenarioLevel: string;
+  seed: string;
+  // Contexte optionnel (utilisé par le provider OpenAI ; ignoré par la démo).
+  scenarioName?: string;
+  callType?: string;
+  objective?: string;
+  prospectProfile?: string;
+  successConditions?: string;
+  failureConditions?: string;
+  knowledge?: EvaluationContextKnowledge[];
+}
+
 export interface EvaluationProvider {
-  evaluate(input: {
-    turns: Array<{ role: string; content: string; atMs: number }>;
-    rubric: RubricScoreInput[];
-    scenarioLevel: string;
-    seed: string;
-  }): Promise<EvaluationResult>;
+  evaluate(input: EvaluationInput): Promise<EvaluationResult>;
 }

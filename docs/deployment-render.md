@@ -74,6 +74,10 @@ DATABASE_URL=<Internal Database URL>
 SESSION_SECRET=<openssl rand -base64 48>
 AI_PROVIDER=demo                 # ou openai
 OPENAI_API_KEY=                  # requis seulement si AI_PROVIDER=openai
+OPENAI_REALTIME_MODEL=gpt-realtime          # session vocale (WebRTC)
+OPENAI_EVALUATION_MODEL=gpt-4o-mini         # évaluation structurée (Structured Outputs) — modèle DISTINCT du Realtime
+OPENAI_TRANSCRIPTION_MODEL=whisper-1
+OPENAI_REALTIME_VOICE=marin
 STORAGE_DRIVER=s3
 S3_BUCKET=<bucket>
 S3_REGION=<region>
@@ -98,8 +102,20 @@ LOG_LEVEL=info
 3. **Environment** : recopier **exactement** les mêmes variables que le Web Service (le worker a
    besoin de `DATABASE_URL`, du stockage et, le cas échéant, d'OpenAI).
 
-> Le mode démo n'effectue pas de traitement long réel : le worker reste néanmoins utile pour
-> consommer la file (`ProcessingJob`) de façon fiable et idempotente, y compris en démo.
+> **Le Background Worker est OBLIGATOIRE en `AI_PROVIDER=openai`.** L'évaluation de fin d'appel
+> (« Terminer et obtenir l'analyse ») n'est plus exécutée en ligne : la route de finalisation
+> enfile une tâche `EVALUATE_SIMULATION` et répond immédiatement `202` avec l'`analysisUrl`. C'est
+> le worker (`npm run worker`) qui appelle réellement `OPENAI_EVALUATION_MODEL`, écrit
+> l'évaluation, puis passe la simulation en `COMPLETED`.
+>
+> **Sans worker déployé, l'analyse reste bloquée en `EVALUATION_PENDING`** : la page
+> `/app/analysis/<id>` affiche « Analyse en attente… » et interroge le statut toutes les 2 s, mais
+> aucun score n'apparaît (l'UI ne redirige jamais silencieusement vers l'accueil). Le worker doit
+> donc partager le **même `DATABASE_URL`** et les mêmes variables `OPENAI_*` que le Web Service.
+>
+> Le mode démo n'effectue pas de traitement long réel via OpenAI, mais le worker reste utile pour
+> consommer la file (`ProcessingJob`) de façon fiable et idempotente (l'évaluation démo passe
+> également par la même tâche).
 
 ## 6. Déployer et vérifier
 

@@ -3,6 +3,14 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { log, safeErrorMessage } from "./log";
 import { runRecordingPipeline, markRecordingFailed } from "./recordingService";
+import {
+  runSimulationEvaluation,
+  markSimulationEvaluationFailed,
+} from "./simulationService";
+import { JobType } from "./jobTypes";
+
+export { JobType } from "./jobTypes";
+export type { JobTypeValue } from "./jobTypes";
 
 /**
  * File de tâches persistée dans PostgreSQL, consommée par un worker séparé
@@ -16,10 +24,6 @@ import { runRecordingPipeline, markRecordingFailed } from "./recordingService";
  *   (deux workers ne traitent jamais la même tâche simultanément).
  * - Retries + backoff exponentiel plafonné, jusqu'à maxAttempts.
  */
-
-export const JobType = {
-  RECORDING_PIPELINE: "RECORDING_PIPELINE",
-} as const;
 
 export interface ClaimedJob {
   id: string;
@@ -116,6 +120,8 @@ async function failJob(job: ClaimedJob, error: string): Promise<void> {
     });
     if (job.type === JobType.RECORDING_PIPELINE) {
       await markRecordingFailed(job.targetId, job.organizationId, error);
+    } else if (job.type === JobType.EVALUATE_SIMULATION) {
+      await markSimulationEvaluationFailed(job.targetId, job.organizationId, error);
     }
     log.error("job.failed_permanent", {
       jobId: job.id,
@@ -153,6 +159,9 @@ export async function runClaimedJob(job: ClaimedJob): Promise<void> {
     switch (job.type) {
       case JobType.RECORDING_PIPELINE:
         await runRecordingPipeline(job.targetId, job.organizationId);
+        break;
+      case JobType.EVALUATE_SIMULATION:
+        await runSimulationEvaluation(job.targetId, job.organizationId);
         break;
       default:
         throw new Error(`Type de tâche inconnu : ${job.type}`);

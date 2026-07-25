@@ -6,7 +6,10 @@ import {
   demoRealtime,
   demoEvaluation,
 } from "./demo";
-import { OpenAIRealtimeSessionProvider } from "./openai";
+import {
+  OpenAIRealtimeSessionProvider,
+  OpenAIEvaluationProvider,
+} from "./openai";
 import type {
   EvaluationProvider,
   KnowledgeExtractionProvider,
@@ -28,10 +31,12 @@ export { EvaluationResultSchema } from "./schemas";
  *
  * État réel des intégrations (audité, sans se fier aux commentaires historiques) :
  * - Realtime (voix) : implémentation OpenAI RÉELLE via secret éphémère.
- * - Transcription / Extraction / Évaluation : implémentations DÉMO déterministes.
- *   Les versions OpenAI réelles NE SONT PAS encore implémentées. En mode
- *   AI_PROVIDER=openai, ces providers lèvent une erreur claire plutôt que de
- *   retomber silencieusement sur la démo (ce qui masquerait l'état réel).
+ * - Évaluation : implémentation OpenAI RÉELLE (Structured Outputs + revalidation Zod),
+ *   exécutée de façon asynchrone par le worker (file ProcessingJob).
+ * - Transcription / Extraction : implémentations DÉMO déterministes. Les versions
+ *   OpenAI réelles NE SONT PAS encore implémentées. En mode AI_PROVIDER=openai, ces
+ *   providers lèvent une erreur claire plutôt que de retomber silencieusement sur la
+ *   démo (ce qui masquerait l'état réel).
  */
 
 class NotImplementedProviderError extends Error {
@@ -55,7 +60,7 @@ export function getKnowledgeExtractionProvider(): KnowledgeExtractionProvider {
 
 export function getEvaluationProvider(): EvaluationProvider {
   if (isDemoMode()) return demoEvaluation;
-  throw new NotImplementedProviderError("L'évaluation OpenAI");
+  return new OpenAIEvaluationProvider();
 }
 
 export function getRealtimeSessionProvider(): RealtimeSessionProvider {
