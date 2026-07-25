@@ -10,6 +10,14 @@ import {
 import { getEvaluationProvider, EvaluationResultSchema } from "./providers";
 import { DEFAULT_RUBRIC, type RubricCriterion } from "./rubric";
 import { SimulationStatus } from "./enums";
+import { HttpError } from "./httpError";
+import { log, safeErrorMessage } from "./log";
+import { JobType } from "./jobTypes";
+
+/** URL de la page d'analyse d'une simulation (jamais /app). */
+export function analysisUrlFor(simulationId: string): string {
+  return `/app/analysis/${simulationId}`;
+}
 
 const DEMO_PROSPECT_NAMES = ["Malik", "Sophie", "Karim", "Nadia", "Thomas"];
 
@@ -146,28 +154,43 @@ export async function appendRealtimeTurn(input: {
   }
 }
 
-/** Finalise la simulation et lance l'évaluation serveur structurée. */
+export type FinalizeResult =
+  | { kind: "abandoned" }
+  | { kind: "completed"; analysisUrl: string }
+  | { kind: "pending"; analysisUrl: string };
+
+/**
+ * Finalise une simulation. L'évaluation n'est PLUS exécutée en ligne : elle est
+ * confiée au worker via une tâche persistante (ProcessingJob EVALUATE_SIMULATION).
+ * La route renvoie immédiatement (202) l'URL d'analyse ; la page d'analyse
+ * interroge ensuite le statut jusqu'à COMPLETED/EVALUATION_FAILED.
+ *
+ * Idempotence :
+ * - déjà évaluée → renvoie l'analyse existante (aucune 2e évaluation) ;
+ * - un job existe déjà (non FAILED) → renvoie la même URL sans recréer de job ;
+ * - abandon → aucune évaluation.
+ *
+ * Validation métier : refuse d'évaluer une conversation sans au moins un tour
+ * agent ET un tour prospect (jamais l'IA seule).
+ */
 export async function finalizeSimulation(input: {
   simulationId: string;
   organizationId: string;
   durationSec: number;
   outcome?: string | null;
   abandoned?: boolean;
-}): Promise<{ evaluationId: string | null }> {
+}): Promise<FinalizeResult> {
   const sim = await prisma.simulation.findFirstOrThrow({
     where: { id: input.simulationId, organizationId: input.organizationId },
     include: {
-      scenario: { include: { rubric: true } },
-      turns: { orderBy: { atMs: "asc" } },
-      evaluation: true,
+      turns: { select: { role: true } },
+      evaluation: { select: { id: true } },
     },
   });
 
-  // Idempotence : si déjà évaluée, ne pas recalculer.
-  if (sim.evaluation) {
-    return { evaluationId: sim.evaluation.id };
-  }
+  const analysisUrl = analysisUrlFor(sim.id);
 
+  // Abandon : non noté, aucune évaluation.
   if (input.abandoned) {
     await prisma.simulation.update({
       where: { id: sim.id },
@@ -178,69 +201,217 @@ export async function finalizeSimulation(input: {
         updatedAt: nowIso(),
       },
     });
-    return { evaluationId: null };
+    return { kind: "abandoned" };
   }
+
+  // Idempotence 1 : déjà évaluée.
+  if (sim.evaluation) return { kind: "completed", analysisUrl };
+
+  // Validation métier : il faut un échange réel (agent ET prospect).
+  const hasAgent = sim.turns.some((t) => t.role === "AGENT");
+  const hasProspect = sim.turns.some((t) => t.role === "PROSPECT");
+  if (!hasAgent || !hasProspect) {
+    throw new HttpError(
+      422,
+      "Conversation trop courte pour être évaluée : il faut au moins un échange entre vous et le prospect.",
+    );
+  }
+
+  // Idempotence 2 : une tâche d'évaluation est déjà en file (et pas en échec définitif).
+  const existingJob = await prisma.processingJob.findUnique({
+    where: {
+      type_targetId: {
+        type: JobType.EVALUATE_SIMULATION,
+        targetId: sim.id,
+      },
+    },
+    select: { status: true },
+  });
+  if (existingJob && existingJob.status !== "FAILED") {
+    return { kind: "pending", analysisUrl };
+  }
+
+  // Transaction : passe en EVALUATION_PENDING + (ré)active la tâche. L'unicité
+  // (type, targetId) garantit qu'une seule tâche d'évaluation existe par simulation.
+  const now = nowIso();
+  await prisma.$transaction(async (tx) => {
+    await tx.simulation.update({
+      where: { id: sim.id },
+      data: {
+        status: SimulationStatus.EVALUATION_PENDING,
+        endedAt: now,
+        durationSec: input.durationSec,
+        outcome: input.outcome ?? undefined,
+        updatedAt: now,
+      },
+    });
+    await tx.processingJob.upsert({
+      where: {
+        type_targetId: {
+          type: JobType.EVALUATE_SIMULATION,
+          targetId: sim.id,
+        },
+      },
+      create: {
+        organizationId: sim.organizationId,
+        type: JobType.EVALUATE_SIMULATION,
+        targetId: sim.id,
+        status: "PENDING",
+        maxAttempts: 5,
+      },
+      update: { status: "PENDING", runAfter: new Date(), lastError: null },
+    });
+  });
+
+  log.info("evaluation.job_created", {
+    organizationId: sim.organizationId,
+    simulationId: sim.id,
+  });
+
+  return { kind: "pending", analysisUrl };
+}
+
+/**
+ * Exécute l'évaluation d'une simulation (appelée par le worker via la file).
+ * Idempotente : si l'évaluation existe déjà, se contente d'aligner le statut.
+ * Valide la sortie du provider avec Zod AVANT écriture, puis persiste
+ * l'évaluation + les scores par compétence dans une transaction.
+ */
+export async function runSimulationEvaluation(
+  simulationId: string,
+  organizationId: string,
+): Promise<void> {
+  const sim = await prisma.simulation.findFirstOrThrow({
+    where: { id: simulationId, organizationId },
+    include: {
+      scenario: { include: { rubric: true } },
+      turns: { orderBy: { atMs: "asc" } },
+      evaluation: { select: { id: true } },
+    },
+  });
+
+  // Idempotence : déjà évaluée → assure COMPLETED et sort.
+  if (sim.evaluation) {
+    if (sim.status !== SimulationStatus.COMPLETED) {
+      await prisma.simulation.update({
+        where: { id: sim.id },
+        data: { status: SimulationStatus.COMPLETED, updatedAt: nowIso() },
+      });
+    }
+    return;
+  }
+
+  // Défense en profondeur : ne jamais évaluer l'IA seule.
+  const hasAgent = sim.turns.some((t) => t.role === "AGENT");
+  const hasProspect = sim.turns.some((t) => t.role === "PROSPECT");
+  if (!hasAgent || !hasProspect) {
+    throw new Error("Transcript incomplet : au moins un tour agent et un tour prospect sont requis.");
+  }
+
+  await prisma.simulation.update({
+    where: { id: sim.id },
+    data: { status: SimulationStatus.EVALUATING, updatedAt: nowIso() },
+  });
+  log.info("evaluation.started", {
+    organizationId,
+    simulationId: sim.id,
+    turns: sim.turns.length,
+  });
 
   const rubric: RubricCriterion[] = sim.scenario.rubric
     ? parseJson<RubricCriterion[]>(sim.scenario.rubric.criteria, DEFAULT_RUBRIC)
     : DEFAULT_RUBRIC;
 
-  const turns = sim.turns.map((t) => ({ role: t.role, content: t.content, atMs: t.atMs }));
+  const knowledge = await loadApprovedKnowledge(sim.scenario);
+  const turns = sim.turns.map((t) => ({
+    role: t.role,
+    content: t.content,
+    atMs: t.atMs,
+  }));
 
-  // Validation Zod de la sortie AVANT toute écriture : un échec ou une réponse
-  // malformée ne peut pas enregistrer une évaluation partielle comme réussie.
+  // Validation Zod AVANT écriture : une réponse malformée ne peut pas être
+  // enregistrée comme une évaluation réussie.
   const result = EvaluationResultSchema.parse(
     await getEvaluationProvider().evaluate({
       turns,
       rubric: rubric.map((c) => ({ key: c.key, label: c.label, weight: c.weight })),
       scenarioLevel: sim.scenario.level,
       seed: sim.id,
+      scenarioName: sim.scenario.name,
+      callType: sim.scenario.callType,
+      objective: sim.scenario.objective ?? undefined,
+      prospectProfile: sim.scenario.prospectProfile ?? undefined,
+      successConditions: sim.scenario.successConditions ?? undefined,
+      failureConditions: sim.scenario.failureConditions ?? undefined,
+      knowledge,
     }),
   );
+  log.info("evaluation.openai_completed", {
+    organizationId,
+    simulationId: sim.id,
+    overallScore: result.overallScore,
+  });
 
   const now = nowIso();
-  const evaluation = await prisma.simulationEvaluation.create({
-    data: {
-      simulationId: sim.id,
-      overallScore: result.overallScore,
-      summary: result.summary,
-      strengths: JSON.stringify(result.strengths),
-      improvements: JSON.stringify(result.improvements),
-      advice: JSON.stringify(result.advice),
-      betterExample: result.betterExample,
-      keyMoments: JSON.stringify(result.keyMoments),
-      outcome: input.outcome ?? result.outcome,
-      createdAt: now,
-      skillScores: {
-        create: result.skillScores.map((s) => ({
-          key: s.key,
-          label: s.label,
-          score: s.score,
-          maxScore: s.maxScore,
-          rationale: s.rationale,
-          evidence: s.evidence,
-          recommendation: s.recommendation,
-        })),
+  await prisma.$transaction(async (tx) => {
+    await tx.simulationEvaluation.create({
+      data: {
+        simulationId: sim.id,
+        overallScore: result.overallScore,
+        summary: result.summary,
+        strengths: JSON.stringify(result.strengths),
+        improvements: JSON.stringify(result.improvements),
+        advice: JSON.stringify(result.advice),
+        betterExample: result.betterExample,
+        keyMoments: JSON.stringify(result.keyMoments),
+        outcome: sim.outcome ?? result.outcome,
+        createdAt: now,
+        skillScores: {
+          create: result.skillScores.map((s) => ({
+            key: s.key,
+            label: s.label,
+            score: s.score,
+            maxScore: s.maxScore,
+            rationale: s.rationale,
+            evidence: s.evidence,
+            recommendation: s.recommendation,
+          })),
+        },
       },
-    },
+    });
+    await tx.simulation.update({
+      where: { id: sim.id },
+      data: {
+        status: SimulationStatus.COMPLETED,
+        outcome: sim.outcome ?? result.outcome,
+        updatedAt: now,
+      },
+    });
+    await tx.scenarioAssignment.updateMany({
+      where: { scenarioId: sim.scenarioId, teleproId: sim.teleproId },
+      data: { status: "COMPLETED" },
+    });
   });
 
-  await prisma.simulation.update({
-    where: { id: sim.id },
-    data: {
-      status: SimulationStatus.COMPLETED,
-      endedAt: now,
-      durationSec: input.durationSec,
-      outcome: input.outcome ?? result.outcome,
-      updatedAt: now,
-    },
+  log.info("evaluation.persisted", {
+    organizationId,
+    simulationId: sim.id,
   });
+}
 
-  // Marque l'assignation comme complétée.
-  await prisma.scenarioAssignment.updateMany({
-    where: { scenarioId: sim.scenarioId, teleproId: sim.teleproId },
-    data: { status: "COMPLETED" },
+/** Marque une simulation comme échec d'évaluation (après échec définitif de la tâche). */
+export async function markSimulationEvaluationFailed(
+  simulationId: string,
+  organizationId: string,
+  error: unknown,
+): Promise<void> {
+  await prisma.simulation.updateMany({
+    where: { id: simulationId, organizationId },
+    data: { status: SimulationStatus.EVALUATION_FAILED, updatedAt: nowIso() },
   });
-
-  return { evaluationId: evaluation.id };
+  log.error("evaluation.failed", {
+    organizationId,
+    simulationId,
+    error: safeErrorMessage(error),
+  });
 }

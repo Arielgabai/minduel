@@ -2,7 +2,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { ZodError } from "zod";
-import { HttpError } from "./auth";
+import { HttpError } from "./httpError";
 import { log, safeErrorMessage } from "./log";
 
 /** Identifiant de corrélation ajouté aux logs et réponses d'erreur. */

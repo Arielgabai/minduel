@@ -3,6 +3,7 @@ import { seededRandom } from "../utils";
 import { serverConfig } from "../config";
 import type {
   EvaluationProvider,
+  EvaluationInput,
   EvaluationResult,
   KnowledgeExtractionProvider,
   KnowledgeDraft,
@@ -172,12 +173,7 @@ class DemoRealtimeSessionProvider implements RealtimeSessionProvider {
 // fondé sur le contenu réel des tours (aucune métrique inventée non calculable).
 // ------------------------------------------------------------------
 class DemoEvaluationProvider implements EvaluationProvider {
-  async evaluate(input: {
-    turns: Array<{ role: string; content: string; atMs: number }>;
-    rubric: Array<{ key: string; label: string; weight: number }>;
-    scenarioLevel: string;
-    seed: string;
-  }): Promise<EvaluationResult> {
+  async evaluate(input: EvaluationInput): Promise<EvaluationResult> {
     const rnd = seededRandom(input.seed);
     const agentTurns = input.turns.filter((t) => t.role === "AGENT");
     const prospectTurns = input.turns.filter((t) => t.role === "PROSPECT");
