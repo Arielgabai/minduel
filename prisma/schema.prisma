@@ -38,6 +38,7 @@ model Organization {
   simulations      Simulation[]
   auditEvents      AuditEvent[]
   assignments      ScenarioAssignment[]
+  callAnalyses     CallAnalysis[]
 
   @@index([slug])
 }
@@ -133,15 +134,28 @@ model Scenario {
   successConditions String?
   failureConditions String?
   targetDurationSec Int      @default(300)
-  status         String  @default("DRAFT") // DRAFT | PUBLISHED
+  status         String  @default("DRAFT") // DRAFT | REVIEW_REQUIRED | PUBLISHED | ARCHIVED
   // Références aux connaissances approuvées injectées
   knowledgeRefs  String?  // string[] d'ids KnowledgeItem
+  // Provenance (exercice généré depuis un appel modèle)
+  sourceRecordingId String? @unique // 1 exercice par appel (idempotence à la génération)
+  sourceAnalysisId  String?
+  generatedByModel  String?
+  promptVersion     String?
+  // Champs générés (JSON) pour un scénario riche et contextuel
+  traineeBrief        String? // brief remis au commercial (contexte, objectif)
+  aiProspect          String? // JSON: persona IA (comportement, ton, révélations interdites)
+  relationshipHistory String? // JSON: historique fictif de la relation
+  expectedNextSteps   String? // JSON: string[] des étapes attendues
+  targetSkills        String? // JSON: string[] compétences ciblées
+  coachingReference   String? // JSON: repères de coaching (bonnes pratiques retenues)
   createdAt      String
   updatedAt      String
 
   organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   program      TrainingProgram?     @relation(fields: [programId], references: [id])
   author       User?                @relation("ScenarioAuthor", fields: [authorId], references: [id])
+  sourceRecording CallRecording?    @relation("ScenarioSourceRecording", fields: [sourceRecordingId], references: [id])
   rubric       EvaluationRubric?
   assignments  ScenarioAssignment[]
   simulations  Simulation[]
@@ -180,21 +194,41 @@ model CallRecording {
   tags           String? // JSON string[]
   managerNote    String?
   consent        Boolean @default(false)
+  consentAt      String? // horodatage ISO du consentement (traçabilité RGPD)
+  useAsModel     Boolean @default(true) // utiliser cet appel comme appel modèle (génération d'exercice)
   storageKey     String? // clé de stockage privé (jamais public)
   mimeType       String?
   sizeBytes      Int     @default(0)
   durationSec    Int     @default(0)
-  status         String  @default("UPLOADED") // UPLOADED | TRANSCRIBING | ANALYZING | READY | FAILED
+  // Métadonnées audio (ffprobe, best-effort ; null si ffprobe indisponible)
+  audioChannels  Int?
+  audioSampleRate Int?
+  audioCodec     String?
+  audioBitrate   Int?
+  // Statut métier du pipeline (voir RecordingStatus dans src/lib/enums.ts) :
+  // UPLOADED | PREPROCESSING | TRANSCRIBING | ANALYZING | WAITING_FOR_CLARIFICATION
+  // | GENERATING_EXERCISE | REVIEW_REQUIRED | READY | FAILED
+  status         String  @default("UPLOADED")
   errorMessage   String?
+  // Résultats détectés (surfacés dans la liste manager, remplis par le pipeline)
+  detectedCallType          String?
+  callTypeConfidence        Float?
+  referenceSuitabilityScore Int?
+  usableAsReference         Boolean?
+  // Clarifications minimales demandées au manager (JSON), voir clarify route
+  clarificationQuestions String? // JSON: [{id, question, importance, options?}]
+  clarificationAnswers   String? // JSON: {[questionId]: answer}
   enabled        Boolean @default(true)
   processingHash String? // idempotence
   createdAt      String
   updatedAt      String
 
-  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  uploader       User?           @relation(fields: [uploaderId], references: [id])
-  transcript     Transcript?
-  knowledgeItems KnowledgeItem[]
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  uploader        User?           @relation(fields: [uploaderId], references: [id])
+  transcript      Transcript?
+  analysis        CallAnalysis?
+  generatedScenario Scenario?     @relation("ScenarioSourceRecording")
+  knowledgeItems  KnowledgeItem[]
 
   @@index([organizationId])
   @@index([status])
@@ -204,11 +238,40 @@ model Transcript {
   id          String @id @default(uuid())
   recordingId String @unique
   language    String @default("fr")
-  // JSON: [{speaker:"AGENT"|"PROSPECT", text, startMs, endMs}]
+  // Copie JSON héritée (compat) : [{speaker:"AGENT"|"PROSPECT", text, startMs, endMs}].
+  // La source de vérité diarisée est désormais la table relationnelle TranscriptSegment.
   segments    String
+  // Attribution des locuteurs (identifie commercial vs client à partir de la diarisation)
+  commercialSpeakerId        String?
+  customerSpeakerId          String?
+  speakerAssignmentConfidence Float?
+  speakerAssignmentRationale String?
+  provider    String? // ex : "openai" | "demo"
+  model       String? // ex : gpt-4o-transcribe-diarize
   createdAt   String
 
-  recording CallRecording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  recording CallRecording      @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  turns     TranscriptSegment[]
+}
+
+// Segments diarisés (relationnels car liés à des timestamps et référencés comme preuves
+// par l'analyse via evidenceSegmentIds). speakerId provient du fournisseur de diarisation.
+model TranscriptSegment {
+  id            String  @id @default(uuid())
+  transcriptId  String
+  idx           Int     @default(0) // ordre stable
+  speakerId     String // identifiant locuteur brut (ex : "speaker_0")
+  role          String? // AGENT | PROSPECT (rempli après attribution), null si inconnu
+  startMs       Int     @default(0)
+  endMs         Int     @default(0)
+  text          String
+  anonymizedText String? // texte anonymisé (PII remplacées par des variables)
+  confidence    Float?
+
+  transcript Transcript @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+
+  @@index([transcriptId])
+  @@index([transcriptId, idx])
 }
 
 model KnowledgeItem {
@@ -239,7 +302,8 @@ model EvaluationRubric {
   organizationId String
   scenarioId     String? @unique
   name           String  @default("Grille par défaut")
-  // JSON: [{key, label, weight}] total 100
+  // JSON: [{key, label, weight, description?, observableSignals?[], sourcePracticeIds?[]}] total 100
+  // key/label/weight sont préservés pour compat avec l'évaluation existante.
   criteria       String
   createdAt      String
   updatedAt      String
@@ -248,6 +312,37 @@ model EvaluationRubric {
   scenario     Scenario?    @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
+}
+
+// Analyse structurée d'un appel modèle (1:1 avec CallRecording).
+// Colonnes indexables pour la liste/filtrage ; JSON pour les structures variables.
+model CallAnalysis {
+  id             String @id @default(uuid())
+  organizationId String
+  recordingId    String @unique
+  // Colonnes indexables
+  callType                  String? // voir CallType (COLD_PROSPECTING, EXISTING_CUSTOMER, ...)
+  callTypeConfidence        Float?
+  relationshipStage         String? // NEW | EXISTING | RENEWAL | ...
+  referenceSuitabilityScore Int?    @default(0)
+  usable                    Boolean @default(true)
+  language                  String  @default("fr")
+  model                     String?
+  promptVersion             String?
+  // Structures variables (JSON)
+  summary               String? // synthèse courte, anonymisée
+  customerProfile       String? // JSON
+  commercialStrategy    String? // JSON (bonnes pratiques retenues avec evidenceSegmentIds)
+  ambiguities           String? // JSON: [{id, question, importance}]
+  referenceSuitability  String? // JSON (justification du score)
+  createdAt      String
+  updatedAt      String
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  recording    CallRecording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([callType])
 }
 
 model Simulation {

@@ -56,8 +56,16 @@ const rawSchema = z
     // Modèle Realtime GA (speech-to-speech WebRTC). "gpt-realtime" est le modèle
     // GA compatible avec l'endpoint /v1/realtime/client_secrets ({type:"realtime"}).
     OPENAI_REALTIME_MODEL: z.string().default("gpt-realtime"),
-    OPENAI_TRANSCRIPTION_MODEL: z.string().default("whisper-1"),
+    // Transcription diarisée par défaut pour le pipeline appel -> exercice.
+    OPENAI_TRANSCRIPTION_MODEL: z.string().default("gpt-4o-transcribe-diarize"),
     OPENAI_EVALUATION_MODEL: z.string().default("gpt-4o-mini"),
+    // Modèles (Responses API) pour l'analyse structurée et la génération de scénario.
+    OPENAI_ANALYSIS_MODEL: z.string().default("gpt-5.6-terra"),
+    OPENAI_SCENARIO_MODEL: z.string().default("gpt-5.6-terra"),
+    // Effort de raisonnement pour l'analyse (Responses API) : minimal|low|medium|high.
+    OPENAI_ANALYSIS_REASONING_EFFORT: z
+      .enum(["minimal", "low", "medium", "high"])
+      .default("medium"),
     // Voix de sortie GA (ex. marin, cedar, alloy…). Modifiable via l'environnement.
     OPENAI_REALTIME_VOICE: z.string().default("marin"),
 
@@ -75,10 +83,22 @@ const rawSchema = z
 
     // Durée de validité des URLs pré-signées (téléchargement/upload).
     SIGNED_URL_TTL_SECONDS: intFromString(300, 30, 3600),
-    // Taille maximale d'un fichier audio (Mo).
+    // Taille maximale d'un fichier audio (Mo). MAX_AUDIO_UPLOAD_MB est la variable
+    // canonique du pipeline appel -> exercice ; MAX_AUDIO_SIZE_MB reste un alias
+    // rétro-compatible (utilisé comme valeur de repli si le nouveau n'est pas défini).
+    MAX_AUDIO_UPLOAD_MB: intFromString(100, 1, 2000),
     MAX_AUDIO_SIZE_MB: intFromString(25, 1, 500),
     // Durée de conservation par défaut des enregistrements (jours).
+    // AUDIO_RETENTION_DAYS est canonique ; RECORDING_RETENTION_DAYS reste un alias.
+    AUDIO_RETENTION_DAYS: intFromString(90, 1, 3650),
     RECORDING_RETENTION_DAYS: intFromString(90, 1, 3650),
+    // Seuil de confiance en dessous duquel on demande au manager d'identifier le
+    // commercial (attribution des locuteurs).
+    SPEAKER_ASSIGNMENT_CONFIDENCE_THRESHOLD: z
+      .string()
+      .optional()
+      .transform((v) => (v === undefined || v === "" ? 0.75 : Number(v)))
+      .pipe(z.number().min(0).max(1)),
 
     // Journalisation.
     LOG_LEVEL: z

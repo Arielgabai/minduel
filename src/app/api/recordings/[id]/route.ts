@@ -36,10 +36,10 @@ export async function PATCH(
         where: { id },
         data: { status: RecordingStatus.UPLOADED, errorMessage: null, updatedAt: nowIso() },
       });
-      // Re-planifie le traitement dans la file persistante.
+      // Re-planifie le traitement dans la file persistante, au bon point d'entrée.
       await enqueueJob({
         organizationId: manager.organizationId,
-        type: JobType.RECORDING_PIPELINE,
+        type: rec.useAsModel ? JobType.PREPROCESS_RECORDING : JobType.RECORDING_PIPELINE,
         targetId: id,
       });
       return ok({ status: RecordingStatus.UPLOADED });

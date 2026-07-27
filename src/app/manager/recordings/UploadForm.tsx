@@ -5,55 +5,31 @@ import { useRouter } from "next/navigation";
 import { Button, Card } from "@/components/ui";
 import { formatBytes } from "@/lib/utils";
 
-type Phase = "idle" | "uploading" | "processing" | "done" | "error";
+type Phase = "idle" | "uploading" | "error";
 
+/**
+ * Import minimal : seuls le fichier + le consentement sont requis.
+ * Le titre, la campagne et la note sont optionnels. « Utiliser comme appel
+ * modèle » (défaut activé) déclenche le pipeline de génération d'exercice.
+ * Après l'upload, on redirige vers la fiche (page de progression / validation).
+ */
 export function UploadForm() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [title, setTitle] = useState("");
   const [campaign, setCampaign] = useState("");
-  const [callOutcome, setCallOutcome] = useState("");
-  const [tags, setTags] = useState("");
   const [managerNote, setManagerNote] = useState("");
   const [consent, setConsent] = useState(false);
+  const [useAsModel, setUseAsModel] = useState(true);
+  const [showOptional, setShowOptional] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
-  const [statusLabel, setStatusLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   function pickFile(f: File | null) {
     if (!f) return;
     setFile(f);
-    if (!title) setTitle(f.name.replace(/\.[^.]+$/, ""));
-  }
-
-  async function pollProcessing(id: string) {
-    setPhase("processing");
-    const labels: Record<string, string> = {
-      TRANSCRIBING: "Transcription en cours…",
-      ANALYZING: "Analyse et extraction…",
-      READY: "Prêt ✓",
-      FAILED: "Échec du traitement",
-    };
-    for (let i = 0; i < 8; i++) {
-      const res = await fetch(`/api/recordings/${id}/process`, { method: "POST" });
-      const json = await res.json();
-      const status = json.data?.status as string;
-      setStatusLabel(labels[status] ?? status);
-      router.refresh();
-      if (status === "READY") {
-        setPhase("done");
-        return;
-      }
-      if (status === "FAILED") {
-        setPhase("error");
-        setError("Le traitement a échoué. Tu peux le relancer depuis la fiche.");
-        return;
-      }
-      await new Promise((r) => setTimeout(r, 700));
-    }
-    setPhase("done");
   }
 
   async function submit(e: React.FormEvent) {
@@ -65,12 +41,11 @@ export function UploadForm() {
     setPhase("uploading");
     const fd = new FormData();
     fd.append("file", file);
-    fd.append("title", title);
-    fd.append("campaign", campaign);
-    fd.append("callOutcome", callOutcome);
-    fd.append("tags", tags);
-    fd.append("managerNote", managerNote);
+    if (title) fd.append("title", title);
+    if (campaign) fd.append("campaign", campaign);
+    if (managerNote) fd.append("managerNote", managerNote);
     fd.append("consent", String(consent));
+    fd.append("useAsModel", String(useAsModel));
 
     try {
       const res = await fetch("/api/recordings", { method: "POST", body: fd });
@@ -80,16 +55,9 @@ export function UploadForm() {
         setError(json.error?.message ?? "Upload impossible.");
         return;
       }
-      // Réinitialise le formulaire.
       const id = json.data.id as string;
-      setFile(null);
-      setTitle("");
-      setCampaign("");
-      setTags("");
-      setManagerNote("");
-      setConsent(false);
-      if (inputRef.current) inputRef.current.value = "";
-      await pollProcessing(id);
+      // Redirige vers la fiche : la progression y est suivie en direct.
+      router.push(`/manager/recordings/${id}`);
     } catch {
       setPhase("error");
       setError("Erreur réseau.");
@@ -102,7 +70,6 @@ export function UploadForm() {
   return (
     <Card>
       <form onSubmit={submit} className="space-y-3">
-        {/* Drag & drop */}
         <div
           onDragOver={(e) => {
             e.preventDefault();
@@ -121,55 +88,68 @@ export function UploadForm() {
         >
           <span className="text-2xl">📥</span>
           <p className="mt-1 text-sm text-white/70">
-            {file ? file.name : "Glisse un fichier ou clique"}
+            {file ? file.name : "Glisse un appel ou clique"}
           </p>
           <p className="text-xs text-white/40">
-            {file ? formatBytes(file.size) : "MP3, WAV, M4A"}
+            {file ? formatBytes(file.size) : "MP3, WAV, M4A, WebM"}
           </p>
           <input
             ref={inputRef}
             type="file"
-            accept=".mp3,.wav,.m4a,audio/*"
+            accept=".mp3,.wav,.m4a,.webm,audio/*"
             className="hidden"
             onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
           />
         </div>
 
-        <input value={title} onChange={(e) => setTitle(e.target.value)} className={field} placeholder="Titre *" required />
-        <div className="grid grid-cols-2 gap-2">
-          <input value={campaign} onChange={(e) => setCampaign(e.target.value)} className={field} placeholder="Campagne" />
-          <select value={callOutcome} onChange={(e) => setCallOutcome(e.target.value)} className={field}>
-            <option value="">Résultat…</option>
-            <option value="VENTE">Vente</option>
-            <option value="REFUS">Refus</option>
-            <option value="RAPPEL">Rappel</option>
-            <option value="RDV">RDV</option>
-            <option value="AUTRE">Autre</option>
-          </select>
-        </div>
-        <input value={tags} onChange={(e) => setTags(e.target.value)} className={field} placeholder="Tags (séparés par des virgules)" />
-        <textarea value={managerNote} onChange={(e) => setManagerNote(e.target.value)} className={field} placeholder="Note du manager" rows={2} />
-
-        {/* Consentement obligatoire */}
-        <label className="flex items-start gap-2 rounded-lg border border-white/10 bg-white/5 p-3 text-xs text-white/60">
-          <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} className="mt-0.5" />
+        {/* Utiliser comme appel modèle */}
+        <label className="flex items-start gap-2 rounded-lg border border-violet-500/20 bg-violet-500/5 p-3 text-xs text-white/70">
+          <input
+            type="checkbox"
+            checked={useAsModel}
+            onChange={(e) => setUseAsModel(e.target.checked)}
+            className="mt-0.5"
+          />
           <span>
-            Je confirme que mon organisation a le droit de traiter cet enregistrement
-            (base légale / consentement). Évite les données personnelles inutiles et
-            anonymise les informations sensibles.
+            <span className="font-medium text-white/85">Créer un exercice depuis cet appel</span>
+            <br />
+            Transcription, anonymisation et génération d&apos;un scénario d&apos;entraînement équivalent.
           </span>
         </label>
 
-        {error && <p className="text-sm text-red-300">{error}</p>}
-        {phase === "processing" && (
-          <p className="text-sm text-violet-300">⏳ {statusLabel}</p>
-        )}
-        {phase === "done" && (
-          <p className="text-sm text-emerald-300">✓ Import terminé — {statusLabel}</p>
+        {/* Consentement obligatoire */}
+        <label className="flex items-start gap-2 rounded-lg border border-white/10 bg-white/5 p-3 text-xs text-white/60">
+          <input
+            type="checkbox"
+            checked={consent}
+            onChange={(e) => setConsent(e.target.checked)}
+            className="mt-0.5"
+          />
+          <span>
+            Je confirme que mon organisation a le droit de traiter cet enregistrement
+            (base légale / consentement).
+          </span>
+        </label>
+
+        <button
+          type="button"
+          onClick={() => setShowOptional((v) => !v)}
+          className="text-xs text-white/45 hover:text-white/70"
+        >
+          {showOptional ? "− Masquer les champs optionnels" : "+ Champs optionnels (titre, campagne, note)"}
+        </button>
+        {showOptional && (
+          <div className="space-y-2">
+            <input value={title} onChange={(e) => setTitle(e.target.value)} className={field} placeholder="Titre (auto depuis le fichier si vide)" />
+            <input value={campaign} onChange={(e) => setCampaign(e.target.value)} className={field} placeholder="Campagne" />
+            <textarea value={managerNote} onChange={(e) => setManagerNote(e.target.value)} className={field} placeholder="Note du manager" rows={2} />
+          </div>
         )}
 
-        <Button type="submit" disabled={phase === "uploading" || phase === "processing"} className="w-full">
-          {phase === "uploading" ? "Envoi…" : phase === "processing" ? "Traitement…" : "Importer et traiter"}
+        {error && <p className="text-sm text-red-300">{error}</p>}
+
+        <Button type="submit" disabled={phase === "uploading"} className="w-full">
+          {phase === "uploading" ? "Envoi…" : useAsModel ? "Importer et générer l'exercice" : "Importer l'appel"}
         </Button>
       </form>
     </Card>

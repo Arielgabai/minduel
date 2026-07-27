@@ -1,13 +1,32 @@
 import "server-only";
 import { serverConfig } from "../config";
 import { log, safeErrorMessage } from "../log";
-import { EvaluationResultSchema } from "./schemas";
+import { CallType } from "../enums";
+import {
+  EvaluationResultSchema,
+  CallAnalysisResultSchema,
+  ScenarioGenerationResultSchema,
+  SpeakerAttributionSchema,
+  AnonymizationSchema,
+} from "./schemas";
+import { getAudioStorage } from "./storage";
 import type {
   EvaluationProvider,
   EvaluationInput,
   EvaluationResult,
   RealtimeSessionProvider,
   RealtimeClientSecret,
+  DiarizedTranscriptionProvider,
+  DiarizedTranscription,
+  DiarizedSegment,
+  SpeakerAttributionProvider,
+  SpeakerAttributionResult,
+  AnonymizationProvider,
+  AnonymizationResult,
+  CallAnalysisProvider,
+  CallAnalysisResult,
+  ScenarioGenerationProvider,
+  ScenarioGenerationResult,
 } from "./types";
 
 /**
@@ -368,4 +387,668 @@ function buildEvaluationPrompt(input: EvaluationInput): {
   ].join("\n");
 
   return { system, user };
+}
+
+// ===========================================================================
+// Pipeline appel -> exercice : providers OpenAI réels.
+// ===========================================================================
+
+const OPENAI_BASE = "https://api.openai.com/v1";
+
+/** Ensemble de classification proposé au modèle d'analyse. */
+const CALL_TYPE_ENUM: string[] = [
+  CallType.COLD_PROSPECTING,
+  CallType.WARM_PROSPECTING,
+  CallType.FOLLOW_UP,
+  CallType.EXISTING_CUSTOMER,
+  CallType.UPSELL_CROSS_SELL,
+  CallType.RENEWAL,
+  CallType.RETENTION,
+  CallType.CUSTOMER_SUPPORT,
+  CallType.OTHER,
+];
+
+/**
+ * Appel générique à la Responses API OpenAI avec Structured Outputs (json_schema
+ * strict). Retourne l'objet JSON brut (le caller le revalide avec Zod). N'écrit
+ * jamais la clé ; journalise l'usage de tokens et le request-id quand disponibles.
+ */
+async function callResponsesApi(input: {
+  model: string;
+  system: string;
+  user: string;
+  schemaName: string;
+  schema: Record<string, unknown>;
+  reasoningEffort?: string;
+  logEvent: string;
+  logContext?: Record<string, string | number | boolean | undefined>;
+}): Promise<unknown> {
+  const startedAt = Date.now();
+  const body: Record<string, unknown> = {
+    model: input.model,
+    input: [
+      { role: "system", content: input.system },
+      { role: "user", content: input.user },
+    ],
+    text: {
+      format: {
+        type: "json_schema",
+        name: input.schemaName,
+        strict: true,
+        schema: input.schema,
+      },
+    },
+  };
+  if (input.reasoningEffort) {
+    body.reasoning = { effort: input.reasoningEffort };
+  }
+
+  const res = await fetch(`${OPENAI_BASE}/responses`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${serverConfig.openaiApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    log.error(`${input.logEvent}_error`, {
+      ...input.logContext,
+      status: res.status,
+      requestId: res.headers.get("x-request-id") ?? undefined,
+      detail: safeErrorMessage(detail),
+    });
+    throw new Error(`OpenAI Responses error ${res.status} (${input.schemaName})`);
+  }
+
+  const data = (await res.json()) as {
+    output_text?: string;
+    status?: string;
+    output?: Array<{
+      type?: string;
+      content?: Array<{ type?: string; text?: string; refusal?: string }>;
+    }>;
+    usage?: { input_tokens?: number; output_tokens?: number };
+  };
+
+  const refusal = data.output
+    ?.flatMap((o) => o.content ?? [])
+    .find((c) => c?.type === "refusal")?.refusal;
+  if (refusal) {
+    throw new Error(`OpenAI a refusé la génération (${input.schemaName}).`);
+  }
+
+  const text =
+    data.output_text ??
+    data.output
+      ?.filter((o) => o.type === "message")
+      .flatMap((o) => o.content ?? [])
+      .filter((c) => c?.type === "output_text" && typeof c.text === "string")
+      .map((c) => c.text as string)
+      .join("") ??
+    "";
+
+  if (!text) {
+    throw new Error(`Réponse OpenAI vide (${input.schemaName}).`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`Réponse OpenAI illisible / JSON invalide (${input.schemaName}).`);
+  }
+
+  log.info(input.logEvent, {
+    ...input.logContext,
+    model: input.model,
+    durationMs: Date.now() - startedAt,
+    requestId: res.headers.get("x-request-id") ?? undefined,
+    inputTokens: data.usage?.input_tokens,
+    outputTokens: data.usage?.output_tokens,
+  });
+
+  return parsed;
+}
+
+// ---- Transcription diarisée réelle ----------------------------------------
+export class OpenAITranscriptionProvider implements DiarizedTranscriptionProvider {
+  async transcribeDiarized(input: {
+    storageKey: string | null;
+    language: string;
+    mimeType?: string | null;
+    seed: string;
+  }): Promise<DiarizedTranscription> {
+    if (!input.storageKey) {
+      throw new Error("Transcription impossible : aucun fichier stocké (storageKey manquant).");
+    }
+    const bytes = await getAudioStorage().get(input.storageKey);
+    if (!bytes) {
+      throw new Error("Transcription impossible : fichier audio introuvable dans le stockage.");
+    }
+    const model = serverConfig.models.transcribe;
+    const startedAt = Date.now();
+
+    const form = new FormData();
+    const blob = new Blob([new Uint8Array(bytes)], {
+      type: input.mimeType || "application/octet-stream",
+    });
+    form.append("file", blob, filenameFromKey(input.storageKey));
+    form.append("model", model);
+    form.append("response_format", "diarized_json");
+    form.append("chunking_strategy", "auto");
+    if (input.language) form.append("language", input.language);
+
+    const res = await fetch(`${OPENAI_BASE}/audio/transcriptions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${serverConfig.openaiApiKey}` },
+      body: form,
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      log.error("transcription.openai_error", {
+        status: res.status,
+        requestId: res.headers.get("x-request-id") ?? undefined,
+        detail: safeErrorMessage(detail),
+      });
+      throw new Error(`OpenAI transcription error ${res.status}`);
+    }
+
+    const data = (await res.json()) as {
+      language?: string;
+      duration?: number;
+      text?: string;
+      segments?: Array<{
+        id?: number | string;
+        speaker?: string;
+        start?: number;
+        end?: number;
+        text?: string;
+        confidence?: number;
+        avg_logprob?: number;
+      }>;
+    };
+
+    const rawSegments = data.segments ?? [];
+    const segments: DiarizedSegment[] = rawSegments
+      .filter((s) => typeof s.text === "string" && s.text.trim().length > 0)
+      .map((s) => ({
+        speakerId: (s.speaker ?? "speaker_0").toString(),
+        startMs: Math.max(0, Math.round((s.start ?? 0) * 1000)),
+        endMs: Math.max(0, Math.round((s.end ?? s.start ?? 0) * 1000)),
+        text: String(s.text).trim(),
+        confidence:
+          typeof s.confidence === "number"
+            ? s.confidence
+            : typeof s.avg_logprob === "number"
+              ? Math.max(0, Math.min(1, Math.exp(s.avg_logprob)))
+              : undefined,
+      }));
+
+    if (segments.length === 0) {
+      throw new Error("Transcription vide : aucun segment exploitable renvoyé par OpenAI.");
+    }
+
+    log.info("transcription.completed", {
+      model,
+      durationMs: Date.now() - startedAt,
+      requestId: res.headers.get("x-request-id") ?? undefined,
+      segmentCount: segments.length,
+    });
+
+    return {
+      language: data.language || input.language || "fr",
+      segments,
+      provider: "openai",
+      model,
+    };
+  }
+}
+
+function filenameFromKey(key: string): string {
+  const base = key.split("/").pop() || "audio";
+  return /\.[a-z0-9]{2,4}$/i.test(base) ? base : `${base}.mp3`;
+}
+
+// ---- Attribution des locuteurs --------------------------------------------
+const SPEAKER_ATTRIBUTION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["commercialSpeakerId", "customerSpeakerId", "confidence", "rationale"],
+  properties: {
+    commercialSpeakerId: { type: ["string", "null"] },
+    customerSpeakerId: { type: ["string", "null"] },
+    confidence: { type: "number" },
+    rationale: { type: "string" },
+  },
+} as const;
+
+export class OpenAISpeakerAttributionProvider implements SpeakerAttributionProvider {
+  async attribute(input: {
+    segments: DiarizedSegment[];
+    language: string;
+    seed: string;
+  }): Promise<SpeakerAttributionResult> {
+    const speakers = Array.from(new Set(input.segments.map((s) => s.speakerId)));
+    const transcript = input.segments
+      .slice(0, 60)
+      .map((s) => `[${s.speakerId}] ${s.text}`)
+      .join("\n");
+
+    const system = [
+      "Tu analyses un transcript d'appel commercial DIARISÉ (chaque ligne préfixée par l'identifiant du locuteur).",
+      "Objectif : identifier lequel des locuteurs est le COMMERCIAL (celui qui vend / mène l'appel) et lequel est le CLIENT/PROSPECT.",
+      "Fonde-toi uniquement sur le texte (présentation, argumentaire, questions de qualification côté commercial ; réponses, objections côté client).",
+      "Si tu n'es pas certain, baisse la confiance. commercialSpeakerId et customerSpeakerId doivent être des identifiants présents dans le transcript, ou null si indéterminable.",
+      "Respecte STRICTEMENT le schéma JSON.",
+    ].join("\n");
+    const user = [
+      `Langue : ${input.language}`,
+      `Identifiants de locuteurs présents : ${speakers.join(", ")}`,
+      "",
+      "Transcript :",
+      transcript,
+    ].join("\n");
+
+    const parsed = await callResponsesApi({
+      model: serverConfig.models.analysis,
+      system,
+      user,
+      schemaName: "speaker_attribution",
+      schema: SPEAKER_ATTRIBUTION_SCHEMA as unknown as Record<string, unknown>,
+      logEvent: "speaker_attribution.completed",
+    });
+    return SpeakerAttributionSchema.parse(parsed);
+  }
+}
+
+// ---- Anonymisation ---------------------------------------------------------
+const ANONYMIZATION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["segments", "entities"],
+  properties: {
+    segments: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["idx", "anonymizedText"],
+        properties: {
+          idx: { type: "integer" },
+          anonymizedText: { type: "string" },
+        },
+      },
+    },
+    entities: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["original", "placeholder", "type"],
+        properties: {
+          original: { type: "string" },
+          placeholder: { type: "string" },
+          type: { type: "string" },
+        },
+      },
+    },
+  },
+} as const;
+
+export class OpenAIAnonymizationProvider implements AnonymizationProvider {
+  async anonymize(input: {
+    segments: Array<{ idx: number; speakerId: string; role: string; text: string }>;
+    language: string;
+    seed: string;
+  }): Promise<AnonymizationResult> {
+    const system = [
+      "Tu es un moteur d'anonymisation RGPD pour des transcripts d'appels commerciaux.",
+      "Remplace toute donnée personnelle ou identifiante par une variable générique entre crochets :",
+      "- Noms de personnes -> [CLIENTE] (client/prospect) ou [COMMERCIAL] (vendeur).",
+      "- Entreprises -> [ENTREPRISE]. Villes/adresses -> [VILLE] / [ADRESSE].",
+      "- Téléphones -> [TELEPHONE]. Emails -> [EMAIL]. Numéros de contrat/référence -> [REFERENCE].",
+      "- Montants précis restant utiles pédagogiquement peuvent être conservés ou arrondis.",
+      "Ne change RIEN d'autre au texte (garde le sens, les objections, les arguments).",
+      "Renvoie un objet par segment (même idx) et la table des entités remplacées.",
+      "Respecte STRICTEMENT le schéma JSON.",
+    ].join("\n");
+    const user = [
+      `Langue : ${input.language}`,
+      "Segments (idx | rôle | texte) :",
+      ...input.segments.map((s) => `${s.idx} | ${s.role} | ${s.text}`),
+    ].join("\n");
+
+    const parsed = await callResponsesApi({
+      model: serverConfig.models.analysis,
+      system,
+      user,
+      schemaName: "anonymization",
+      schema: ANONYMIZATION_SCHEMA as unknown as Record<string, unknown>,
+      logEvent: "anonymization.completed",
+    });
+    return AnonymizationSchema.parse(parsed);
+  }
+}
+
+// ---- Analyse structurée d'appel -------------------------------------------
+const STR_ARRAY = { type: "array", items: { type: "string" } } as const;
+const IMPORTANCE_ENUM = { type: "string", enum: ["LOW", "MEDIUM", "HIGH"] } as const;
+
+const CALL_ANALYSIS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "callType",
+    "callTypeConfidence",
+    "relationshipStage",
+    "language",
+    "summary",
+    "customerProfile",
+    "commercialStrategy",
+    "facts",
+    "inferences",
+    "ambiguities",
+    "referenceSuitability",
+  ],
+  properties: {
+    callType: { type: "string", enum: CALL_TYPE_ENUM },
+    callTypeConfidence: { type: "number" },
+    relationshipStage: {
+      type: "string",
+      enum: ["NEW", "EXISTING", "RENEWAL", "UNKNOWN"],
+    },
+    language: { type: "string" },
+    summary: { type: "string" },
+    customerProfile: {
+      type: "object",
+      additionalProperties: false,
+      required: ["role", "context", "needs", "objections", "signals"],
+      properties: {
+        role: { type: "string" },
+        context: { type: "string" },
+        needs: STR_ARRAY,
+        objections: STR_ARRAY,
+        signals: STR_ARRAY,
+      },
+    },
+    commercialStrategy: {
+      type: "object",
+      additionalProperties: false,
+      required: ["objective", "outcome", "retainedPractices", "missedOpportunities"],
+      properties: {
+        objective: { type: "string" },
+        outcome: { type: "string" },
+        retainedPractices: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["id", "label", "description", "evidenceSegmentIds", "importance"],
+            properties: {
+              id: { type: "string" },
+              label: { type: "string" },
+              description: { type: "string" },
+              evidenceSegmentIds: STR_ARRAY,
+              importance: IMPORTANCE_ENUM,
+            },
+          },
+        },
+        missedOpportunities: STR_ARRAY,
+      },
+    },
+    facts: STR_ARRAY,
+    inferences: STR_ARRAY,
+    ambiguities: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "question", "importance"],
+        properties: {
+          id: { type: "string" },
+          question: { type: "string" },
+          importance: IMPORTANCE_ENUM,
+        },
+      },
+    },
+    referenceSuitability: {
+      type: "object",
+      additionalProperties: false,
+      required: ["score", "usable", "rationale"],
+      properties: {
+        score: { type: "integer" },
+        usable: { type: "boolean" },
+        rationale: { type: "string" },
+      },
+    },
+  },
+} as const;
+
+export class OpenAICallAnalysisProvider implements CallAnalysisProvider {
+  async analyze(input: {
+    segments: Array<{ idx: number; role: string; text: string }>;
+    language: string;
+    seed: string;
+    clarifications?: Record<string, string>;
+  }): Promise<CallAnalysisResult> {
+    const system = [
+      "Tu es un analyste expert de la vente par téléphone.",
+      "Tu analyses un transcript d'appel ANONYMISÉ (les PII sont déjà remplacées par des variables).",
+      "Règles STRICTES :",
+      "- N'invente AUCUNE information absente du transcript.",
+      "- Sépare clairement les FAITS (facts, présents littéralement) des INFÉRENCES (inferences, déduites).",
+      "- Chaque bonne pratique retenue (retainedPractices) doit citer les idx de segments-preuves (evidenceSegmentIds).",
+      "- N'infère JAMAIS d'attributs sensibles (origine, religion, santé, opinions, orientation).",
+      "- Classe le type d'appel et estime la confiance. Précise le stade de relation (NEW/EXISTING/RENEWAL/UNKNOWN).",
+      "- Note l'aptitude à servir de référence pédagogique (referenceSuitability, score 0-100).",
+      "- Liste les ambiguïtés bloquantes en importance HIGH uniquement si une clarification humaine est indispensable.",
+      "- Réponds en " + (input.language === "fr" ? "français" : input.language) + ".",
+      "- Respecte STRICTEMENT le schéma JSON.",
+    ].join("\n");
+
+    const clar = input.clarifications
+      ? Object.entries(input.clarifications)
+          .map(([k, v]) => `- ${k}: ${v}`)
+          .join("\n")
+      : "(aucune)";
+
+    const user = [
+      `Langue : ${input.language}`,
+      "Clarifications déjà fournies par le manager :",
+      clar,
+      "",
+      "Transcript anonymisé (idx | rôle | texte) :",
+      ...input.segments.map((s) => `${s.idx} | ${s.role} | ${s.text}`),
+    ].join("\n");
+
+    const parsed = await callResponsesApi({
+      model: serverConfig.models.analysis,
+      system,
+      user,
+      schemaName: "call_analysis",
+      schema: CALL_ANALYSIS_SCHEMA as unknown as Record<string, unknown>,
+      reasoningEffort: serverConfig.models.analysisReasoningEffort,
+      logEvent: "analysis.completed",
+    });
+    return CallAnalysisResultSchema.parse(parsed);
+  }
+}
+
+// ---- Génération de scénario ------------------------------------------------
+const SCENARIO_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "name",
+    "callType",
+    "level",
+    "offer",
+    "objective",
+    "prospectProfile",
+    "initialSituation",
+    "personality",
+    "traineeBrief",
+    "relationshipHistory",
+    "aiProspect",
+    "allowedObjections",
+    "secretInfos",
+    "successConditions",
+    "failureConditions",
+    "expectedNextSteps",
+    "targetSkills",
+    "coachingReference",
+    "rubric",
+    "targetDurationSec",
+  ],
+  properties: {
+    name: { type: "string" },
+    callType: { type: "string", enum: CALL_TYPE_ENUM },
+    level: { type: "string", enum: ["FACILE", "MOYEN", "DIFFICILE"] },
+    offer: { type: "string" },
+    objective: { type: "string" },
+    prospectProfile: { type: "string" },
+    initialSituation: { type: "string" },
+    personality: { type: "string" },
+    traineeBrief: { type: "string" },
+    relationshipHistory: { type: "string" },
+    aiProspect: {
+      type: "object",
+      additionalProperties: false,
+      required: ["persona", "behaviorRules", "prohibitedRevelations", "openingLine"],
+      properties: {
+        persona: { type: "string" },
+        behaviorRules: STR_ARRAY,
+        prohibitedRevelations: STR_ARRAY,
+        openingLine: { type: "string" },
+      },
+    },
+    allowedObjections: STR_ARRAY,
+    secretInfos: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["question", "answer"],
+        properties: { question: { type: "string" }, answer: { type: "string" } },
+      },
+    },
+    successConditions: { type: "string" },
+    failureConditions: { type: "string" },
+    expectedNextSteps: STR_ARRAY,
+    targetSkills: STR_ARRAY,
+    coachingReference: STR_ARRAY,
+    rubric: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["key", "label", "weight", "description", "observableSignals", "sourcePracticeIds"],
+        properties: {
+          key: { type: "string" },
+          label: { type: "string" },
+          weight: { type: "integer" },
+          description: { type: "string" },
+          observableSignals: STR_ARRAY,
+          sourcePracticeIds: STR_ARRAY,
+        },
+      },
+    },
+    targetDurationSec: { type: "integer" },
+  },
+} as const;
+
+export class OpenAIScenarioGenerationProvider implements ScenarioGenerationProvider {
+  async generate(input: {
+    analysis: CallAnalysisResult;
+    language: string;
+    seed: string;
+  }): Promise<ScenarioGenerationResult> {
+    const system = [
+      "Tu conçois un EXERCICE de simulation d'appel commercial à partir de l'analyse d'un appel réel (déjà anonymisée).",
+      "Objectif : produire un scénario FICTIF mais ÉQUIVALENT, travaillant les mêmes compétences, SANS reproduire littéralement l'appel modèle.",
+      "Règles STRICTES :",
+      "- Aucune donnée personnelle réelle ne doit apparaître (invente des noms/contexte fictifs cohérents).",
+      "- Respecte le TYPE d'appel et le STADE de relation : si le client est EXISTANT, le prospect IA doit se comporter comme un client connu (historique, familiarité), pas comme un prospect froid.",
+      "- aiProspect.behaviorRules et prohibitedRevelations pilotent l'IA prospect en simulation temps réel.",
+      "- La grille (rubric) doit refléter les compétences ciblées ; chaque critère relie des sourcePracticeIds issus de l'analyse quand c'est pertinent.",
+      "- Les pondérations de la grille DOIVENT totaliser 100 (sinon elles seront renormalisées).",
+      "- Réponds en " + (input.language === "fr" ? "français" : input.language) + ".",
+      "- Respecte STRICTEMENT le schéma JSON.",
+    ].join("\n");
+
+    const a = input.analysis;
+    const practices = a.commercialStrategy.retainedPractices
+      .map((p) => `- [${p.id}] (${p.importance}) ${p.label}: ${p.description}`)
+      .join("\n");
+    const user = [
+      `Langue : ${input.language}`,
+      `Type d'appel détecté : ${a.callType} (confiance ${a.callTypeConfidence})`,
+      `Stade de relation : ${a.relationshipStage}`,
+      `Synthèse : ${a.summary}`,
+      `Objectif commercial : ${a.commercialStrategy.objective}`,
+      `Issue : ${a.commercialStrategy.outcome}`,
+      "",
+      "Profil client :",
+      `- Rôle : ${a.customerProfile.role}`,
+      `- Contexte : ${a.customerProfile.context}`,
+      `- Besoins : ${a.customerProfile.needs.join("; ")}`,
+      `- Objections : ${a.customerProfile.objections.join("; ")}`,
+      "",
+      "Bonnes pratiques retenues (à faire travailler) :",
+      practices || "(aucune)",
+      "",
+      "Construis l'exercice équivalent conforme au schéma. targetDurationSec entre 180 et 900.",
+    ].join("\n");
+
+    const parsed = await callResponsesApi({
+      model: serverConfig.models.scenario,
+      system,
+      user,
+      schemaName: "scenario_generation",
+      schema: SCENARIO_SCHEMA as unknown as Record<string, unknown>,
+      logEvent: "scenario.generated",
+    });
+    const result = ScenarioGenerationResultSchema.parse(parsed);
+    return normalizeScenarioWeights(result);
+  }
+}
+
+/** Normalise les pondérations de la grille pour totaliser exactement 100. */
+export function normalizeScenarioWeights(
+  result: ScenarioGenerationResult,
+): ScenarioGenerationResult {
+  const total = result.rubric.reduce((s, c) => s + (c.weight || 0), 0);
+  if (result.rubric.length === 0) return result;
+  if (total === 100) return result;
+
+  let rubric: ScenarioGenerationResult["rubric"];
+  if (total <= 0) {
+    const base = Math.floor(100 / result.rubric.length);
+    rubric = result.rubric.map((c) => ({ ...c, weight: base }));
+  } else {
+    rubric = result.rubric.map((c) => ({
+      ...c,
+      weight: Math.max(0, Math.round((c.weight / total) * 100)),
+    }));
+  }
+  // Ajuste le reliquat d'arrondi sur le critère de plus fort poids.
+  const sum = rubric.reduce((s, c) => s + c.weight, 0);
+  const diff = 100 - sum;
+  if (diff !== 0) {
+    let maxIdx = 0;
+    for (let i = 1; i < rubric.length; i++) {
+      const cur = rubric[i];
+      const best = rubric[maxIdx];
+      if (cur && best && cur.weight > best.weight) maxIdx = i;
+    }
+    const target = rubric[maxIdx];
+    if (target) {
+      rubric[maxIdx] = { ...target, weight: Math.max(0, target.weight + diff) };
+    }
+  }
+  return { ...result, rubric };
 }

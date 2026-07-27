@@ -1,6 +1,7 @@
 import "server-only";
 import { seededRandom } from "../utils";
 import { serverConfig } from "../config";
+import { CallType } from "../enums";
 import type {
   EvaluationProvider,
   EvaluationInput,
@@ -11,7 +12,19 @@ import type {
   RealtimeClientSecret,
   TranscriptionProvider,
   TranscriptSegment,
+  DiarizedTranscriptionProvider,
+  DiarizedTranscription,
+  DiarizedSegment,
+  SpeakerAttributionProvider,
+  SpeakerAttributionResult,
+  AnonymizationProvider,
+  AnonymizationResult,
+  CallAnalysisProvider,
+  CallAnalysisResult,
+  ScenarioGenerationProvider,
+  ScenarioGenerationResult,
 } from "./types";
+import { normalizeScenarioWeights } from "./openai";
 
 // ------------------------------------------------------------------
 // Transcription démo : génère un transcript diarisé plausible et
@@ -334,7 +347,311 @@ function pickKeyMoments(
   return moments.slice(0, 3);
 }
 
+// ===========================================================================
+// Pipeline appel -> exercice : providers DÉMO déterministes (aucun appel réseau).
+// ===========================================================================
+
+// Dialogue "client existant / relance" : sert de fixture pour tester la
+// classification (EXISTING/FOLLOW_UP, jamais COLD), l'anonymisation et l'analyse.
+const DEMO_MODEL_DIALOGUE: Array<{ speaker: string; text: string }> = [
+  { speaker: "speaker_1", text: "Bonjour Monsieur Durand, c'est Julie Martin de la société Novéo, je vous rappelle comme convenu la semaine dernière au sujet de votre contrat." },
+  { speaker: "speaker_0", text: "Ah oui bonjour Julie, oui on avait parlé du renouvellement." },
+  { speaker: "speaker_1", text: "Exactement. Depuis notre installation l'an dernier vous êtes chez nous, et votre contrat arrive à échéance le mois prochain. Est-ce que tout se passe bien de votre côté ?" },
+  { speaker: "speaker_0", text: "Globalement oui, mais j'ai trouvé la dernière facture un peu élevée." },
+  { speaker: "speaker_1", text: "Je comprends, regardons ça ensemble. Sur votre offre actuelle on peut basculer sur le nouveau tarif fidélité qui réduirait votre mensualité d'environ 15%." },
+  { speaker: "speaker_0", text: "Et je garde les mêmes services ?" },
+  { speaker: "speaker_1", text: "Oui, exactement les mêmes services, avec en plus l'assistance prioritaire offerte pour les clients qui renouvellent. On se cale sur un rendez-vous jeudi pour signer ?" },
+  { speaker: "speaker_0", text: "Jeudi ça me va, envoyez-moi le récapitulatif par mail à durand.marc@example.com." },
+];
+
+class DemoDiarizedTranscriptionProvider implements DiarizedTranscriptionProvider {
+  async transcribeDiarized(input: {
+    storageKey: string | null;
+    language: string;
+    mimeType?: string | null;
+    seed: string;
+  }): Promise<DiarizedTranscription> {
+    const rnd = seededRandom(input.seed + "-diar");
+    const segments: DiarizedSegment[] = [];
+    let t = 1200 + Math.floor(rnd() * 800);
+    for (const line of DEMO_MODEL_DIALOGUE) {
+      const dur = 1800 + Math.floor(rnd() * 2200);
+      segments.push({
+        speakerId: line.speaker,
+        startMs: t,
+        endMs: t + dur,
+        text: line.text,
+        confidence: 0.9,
+      });
+      t += dur + 350;
+    }
+    return {
+      language: input.language || "fr",
+      segments,
+      provider: "demo",
+      model: "demo-diarize",
+    };
+  }
+}
+
+class DemoSpeakerAttributionProvider implements SpeakerAttributionProvider {
+  async attribute(input: {
+    segments: DiarizedSegment[];
+    language: string;
+    seed: string;
+  }): Promise<SpeakerAttributionResult> {
+    // Le commercial est le locuteur qui se présente ("de la société", "je vous rappelle").
+    const commercialSeg = input.segments.find((s) =>
+      /(de la société|je vous rappelle|je vous appelle|au sujet de votre)/i.test(s.text),
+    );
+    const commercialSpeakerId = commercialSeg?.speakerId ?? input.segments[0]?.speakerId ?? null;
+    const customerSpeakerId =
+      input.segments.map((s) => s.speakerId).find((id) => id !== commercialSpeakerId) ?? null;
+    return {
+      commercialSpeakerId,
+      customerSpeakerId,
+      confidence: 0.92,
+      rationale:
+        "Le locuteur qui se présente (nom + société) et mène l'appel est identifié comme commercial ; l'autre comme client.",
+    };
+  }
+}
+
+class DemoAnonymizationProvider implements AnonymizationProvider {
+  async anonymize(input: {
+    segments: Array<{ idx: number; speakerId: string; role: string; text: string }>;
+    language: string;
+    seed: string;
+  }): Promise<AnonymizationResult> {
+    const replacements: Array<[RegExp, string, string]> = [
+      [/Julie Martin/gi, "[COMMERCIAL]", "NAME"],
+      [/Monsieur Durand|M\. Durand|Durand Marc|Marc Durand|Durand/gi, "[CLIENTE]", "NAME"],
+      [/Nov[ée]o/gi, "[ENTREPRISE]", "COMPANY"],
+      [/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi, "[EMAIL]", "EMAIL"],
+      [/\b(?:0|\+33)\s?[1-9](?:[\s.-]?\d{2}){4}\b/g, "[TELEPHONE]", "PHONE"],
+    ];
+    const entities: AnonymizationResult["entities"] = [];
+    const seen = new Set<string>();
+    const segments = input.segments.map((s) => {
+      let text = s.text;
+      for (const [re, placeholder, type] of replacements) {
+        const matches = text.match(re);
+        if (matches) {
+          for (const m of matches) {
+            const key = m.toLowerCase();
+            if (!seen.has(key)) {
+              seen.add(key);
+              entities.push({ original: m, placeholder, type });
+            }
+          }
+          text = text.replace(re, placeholder);
+        }
+      }
+      return { idx: s.idx, anonymizedText: text };
+    });
+    return { segments, entities };
+  }
+}
+
+class DemoCallAnalysisProvider implements CallAnalysisProvider {
+  async analyze(input: {
+    segments: Array<{ idx: number; role: string; text: string }>;
+    language: string;
+    seed: string;
+    clarifications?: Record<string, string>;
+  }): Promise<CallAnalysisResult> {
+    const joined = input.segments.map((s) => s.text).join(" ").toLowerCase();
+    const isExisting = /(renouvellement|renouvel|votre contrat|déjà client|installation l'an|fidélité|depuis notre)/.test(
+      joined,
+    );
+    const callType = isExisting ? CallType.RENEWAL : CallType.COLD_PROSPECTING;
+    const relationshipStage = isExisting ? "EXISTING" : "NEW";
+
+    const findIdx = (needle: string): string[] => {
+      const seg = input.segments.find((s) => s.text.toLowerCase().includes(needle));
+      return seg ? [String(seg.idx)] : [];
+    };
+
+    return {
+      callType,
+      callTypeConfidence: isExisting ? 0.88 : 0.7,
+      relationshipStage,
+      language: input.language || "fr",
+      summary: isExisting
+        ? "Appel de relance d'un client existant en vue du renouvellement de son contrat, avec traitement d'une objection sur le tarif."
+        : "Appel de prospection à froid visant à décrocher un rendez-vous.",
+      customerProfile: {
+        role: "Client titulaire d'un contrat arrivant à échéance",
+        context:
+          "Client existant globalement satisfait mais sensible au prix de sa dernière facture.",
+        needs: ["Maîtriser sa mensualité", "Conserver ses services actuels"],
+        objections: ["Facture jugée un peu élevée"],
+        signals: ["Ouvert au renouvellement", "Demande un récapitulatif écrit"],
+      },
+      commercialStrategy: {
+        objective: "Sécuriser le renouvellement du contrat au nouveau tarif fidélité.",
+        outcome: "RDV",
+        retainedPractices: [
+          {
+            id: "p1",
+            label: "Rappel du contexte de la relation",
+            description:
+              "Réactive la relation existante en rappelant l'historique et l'échéance du contrat.",
+            evidenceSegmentIds: findIdx("comme convenu"),
+            importance: "HIGH",
+          },
+          {
+            id: "p2",
+            label: "Traitement de l'objection prix",
+            description:
+              "Reconnaît l'objection tarifaire puis propose une offre fidélité chiffrée.",
+            evidenceSegmentIds: findIdx("je comprends"),
+            importance: "HIGH",
+          },
+          {
+            id: "p3",
+            label: "Conclusion sur une prochaine étape datée",
+            description: "Propose un créneau précis pour signer.",
+            evidenceSegmentIds: findIdx("jeudi"),
+            importance: "MEDIUM",
+          },
+        ],
+        missedOpportunities: ["Aucune revalorisation additionnelle proposée."],
+      },
+      facts: [
+        "Le contrat du client arrive à échéance le mois prochain.",
+        "Le client trouve sa dernière facture élevée.",
+        "Un rendez-vous est fixé pour signer.",
+      ],
+      inferences: [
+        "Le client est probablement enclin à renouveler si le prix baisse.",
+      ],
+      ambiguities: [],
+      referenceSuitability: {
+        score: 82,
+        usable: true,
+        rationale:
+          "Appel structuré illustrant plusieurs bonnes pratiques de rétention ; adapté comme exercice.",
+      },
+    };
+  }
+}
+
+class DemoScenarioGenerationProvider implements ScenarioGenerationProvider {
+  async generate(input: {
+    analysis: CallAnalysisResult;
+    language: string;
+    seed: string;
+  }): Promise<ScenarioGenerationResult> {
+    const a = input.analysis;
+    const existing = a.relationshipStage === "EXISTING" || a.relationshipStage === "RENEWAL";
+    const result: ScenarioGenerationResult = {
+      name: existing
+        ? "Renouvellement client — objection tarifaire"
+        : "Prospection à froid — prise de rendez-vous",
+      callType: a.callType,
+      level: "MOYEN",
+      offer: "Contrat de services [ENTREPRISE] avec offre fidélité",
+      objective: a.commercialStrategy.objective || "Sécuriser le renouvellement du contrat.",
+      prospectProfile: a.customerProfile.role,
+      initialSituation: existing
+        ? "Vous rappelez un client existant dont le contrat arrive à échéance. Il vous connaît déjà."
+        : "Vous appelez un prospect qui ne vous connaît pas encore.",
+      personality: "Cordial mais attentif au budget.",
+      traineeBrief: existing
+        ? "Vous êtes commercial chez [ENTREPRISE]. Vous rappelez un client fidèle pour renouveler son contrat. Il a trouvé sa dernière facture élevée : rassurez-le et proposez l'offre fidélité, puis fixez un rendez-vous de signature."
+        : "Vous devez décrocher un rendez-vous auprès d'un nouveau prospect.",
+      relationshipHistory: existing
+        ? "Client depuis un an, installation réalisée l'an dernier, relation cordiale, une relance déjà convenue la semaine passée."
+        : "Aucun historique : premier contact.",
+      aiProspect: {
+        persona: existing
+          ? "Client existant satisfait mais vigilant sur le prix ; connaît déjà le commercial et l'entreprise."
+          : "Prospect pressé, sollicité par de nombreux concurrents.",
+        behaviorRules: existing
+          ? [
+              "Se comporter en client qui connaît déjà l'entreprise (pas de re-présentation formelle).",
+              "Mentionner spontanément que la dernière facture semblait élevée.",
+              "Accepter un rendez-vous si une baisse de tarif crédible est proposée.",
+            ]
+          : [
+              "Rester méfiant tant que la valeur n'est pas démontrée.",
+              "Objecter le manque de temps.",
+            ],
+        prohibitedRevelations: [
+          "Ne jamais révéler de vraies données personnelles.",
+          "Ne pas donner immédiatement son accord sans objection sur le prix.",
+        ],
+        openingLine: existing ? "Ah oui bonjour, on avait parlé du renouvellement." : "Allô, oui ?",
+      },
+      allowedObjections: a.customerProfile.objections.length
+        ? a.customerProfile.objections
+        : ["C'est un peu cher.", "Je n'ai pas le temps."],
+      secretInfos: [
+        {
+          question: "Quel est le budget mensuel cible du client ?",
+          answer: "Il souhaite rester sous sa mensualité actuelle, idéalement 15% de moins.",
+        },
+      ],
+      successConditions: "Obtenir un rendez-vous de signature au tarif fidélité.",
+      failureConditions: "Le client raccroche sans engagement ou reporte sans date.",
+      expectedNextSteps: ["Envoyer un récapitulatif écrit", "Fixer un rendez-vous daté"],
+      targetSkills: ["Rétention", "Traitement de l'objection prix", "Conclusion"],
+      coachingReference: a.commercialStrategy.retainedPractices.map((p) => p.label),
+      rubric: [
+        {
+          key: "reactivation",
+          label: "Réactivation de la relation",
+          weight: 20,
+          description: "Rappelle l'historique et le contexte du client existant.",
+          observableSignals: ["Cite l'échéance du contrat", "Rappelle la relation"],
+          sourcePracticeIds: ["p1"],
+        },
+        {
+          key: "decouverte",
+          label: "Découverte des besoins actuels",
+          weight: 20,
+          description: "Vérifie la satisfaction et fait émerger l'objection.",
+          observableSignals: ["Pose une question ouverte sur la satisfaction"],
+          sourcePracticeIds: [],
+        },
+        {
+          key: "objections",
+          label: "Traitement de l'objection prix",
+          weight: 25,
+          description: "Reconnaît puis répond avec une offre chiffrée.",
+          observableSignals: ["Reformule l'objection", "Propose un tarif fidélité"],
+          sourcePracticeIds: ["p2"],
+        },
+        {
+          key: "argumentation",
+          label: "Valorisation de l'offre fidélité",
+          weight: 15,
+          description: "Met en avant les bénéfices du renouvellement.",
+          observableSignals: ["Mentionne l'assistance prioritaire offerte"],
+          sourcePracticeIds: [],
+        },
+        {
+          key: "conclusion",
+          label: "Conclusion et prochaine étape",
+          weight: 20,
+          description: "Propose un rendez-vous daté pour signer.",
+          observableSignals: ["Propose un créneau précis"],
+          sourcePracticeIds: ["p3"],
+        },
+      ],
+      targetDurationSec: 420,
+    };
+    return normalizeScenarioWeights(result);
+  }
+}
+
 export const demoTranscription = new DemoTranscriptionProvider();
 export const demoKnowledgeExtraction = new DemoKnowledgeExtractionProvider();
 export const demoRealtime = new DemoRealtimeSessionProvider();
 export const demoEvaluation = new DemoEvaluationProvider();
+export const demoDiarizedTranscription = new DemoDiarizedTranscriptionProvider();
+export const demoSpeakerAttribution = new DemoSpeakerAttributionProvider();
+export const demoAnonymization = new DemoAnonymizationProvider();
+export const demoCallAnalysis = new DemoCallAnalysisProvider();
+export const demoScenarioGeneration = new DemoScenarioGenerationProvider();
