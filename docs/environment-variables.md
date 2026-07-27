@@ -23,8 +23,11 @@ Généré à partir des usages réels du code (`src/lib/env.ts`, `src/lib/config
 | `AI_PROVIDER` | Non (défaut `demo`) | tous | Non | `demo` \| `openai` | Sélectionne le fournisseur d'IA. `openai` exige `OPENAI_API_KEY`. |
 | `OPENAI_API_KEY` | **Conditionnel** (si `AI_PROVIDER=openai`) | prod réelle | **Oui** | `sk-...` | Clé OpenAI, lue **uniquement** côté serveur. |
 | `OPENAI_REALTIME_MODEL` | Non (défaut `gpt-realtime`) | tous | Non | `gpt-realtime` | Modèle Realtime GA (speech-to-speech WebRTC), compatible `/v1/realtime/client_secrets`. |
-| `OPENAI_TRANSCRIPTION_MODEL` | Non (défaut `whisper-1`) | tous | Non | `whisper-1` | Modèle de transcription (non implémenté en OpenAI, cf. limites). |
-| `OPENAI_EVALUATION_MODEL` | Non (défaut `gpt-4o-mini`) | tous | Non | `gpt-4o-mini` | Modèle d'évaluation (non implémenté en OpenAI, cf. limites). |
+| `OPENAI_TRANSCRIPTION_MODEL` | Non (défaut `gpt-4o-transcribe-diarize`) | tous | Non | `gpt-4o-transcribe-diarize` | Modèle de transcription **diarisée** du pipeline appel → exercice (`/v1/audio/transcriptions`, `diarized_json`). |
+| `OPENAI_EVALUATION_MODEL` | Non (défaut `gpt-4o-mini`) | tous | Non | `gpt-4o-mini` | Modèle d'évaluation des simulations. |
+| `OPENAI_ANALYSIS_MODEL` | Non (défaut `gpt-5.6-terra`) | tous | Non | `gpt-5.6-terra` | Analyse structurée de l'appel modèle (Responses API, JSON schema strict + Zod). |
+| `OPENAI_SCENARIO_MODEL` | Non (défaut `gpt-5.6-terra`) | tous | Non | `gpt-5.6-terra` | Génération du scénario + grille depuis l'analyse (Responses API, JSON strict + Zod). |
+| `OPENAI_ANALYSIS_REASONING_EFFORT` | Non (défaut `medium`) | tous | Non | `medium` | Effort de raisonnement de l'analyse (`minimal`/`low`/`medium`/`high`). |
 | `OPENAI_REALTIME_VOICE` | Non (défaut `marin`) | tous | Non | `marin` | Voix de sortie GA du prospect IA Realtime (ex. `marin`, `cedar`, `alloy`). |
 | `STORAGE_DRIVER` | Non (défaut `local`) | tous | Non | `s3` | Pilote de stockage audio : `local` (dev) ou `s3` (prod). |
 | `AUDIO_STORAGE_DIR` | Non (défaut `./storage`) | dev (`local`) | Non | `./storage` | Répertoire de stockage local des audios (dev uniquement). |
@@ -35,8 +38,11 @@ Généré à partir des usages réels du code (`src/lib/env.ts`, `src/lib/config
 | `S3_SECRET_ACCESS_KEY` | **Conditionnel** (si `STORAGE_DRIVER=s3`) | prod | **Oui** | `...` | Clé secrète S3. |
 | `S3_FORCE_PATH_STYLE` | Non (défaut `false`) | prod | Non | `true` | `true` pour MinIO / services nécessitant le path-style. |
 | `SIGNED_URL_TTL_SECONDS` | Non (défaut `300`, 30–3600) | tous | Non | `300` | Durée de validité des URLs pré-signées. |
-| `MAX_AUDIO_SIZE_MB` | Non (défaut `25`, 1–500) | tous | Non | `25` | Taille maximale d'un upload audio. |
-| `RECORDING_RETENTION_DAYS` | Non (défaut `90`, 1–3650) | tous | Non | `90` | Rétention par défaut des enregistrements. |
+| `MAX_AUDIO_UPLOAD_MB` | Non (défaut `100`, 1–2000) | tous | Non | `100` | **Canonique** : taille max d'un upload audio (appels réels 15–20 min). Utilisée par le pipeline appel → exercice. |
+| `MAX_AUDIO_SIZE_MB` | Non (défaut `25`, 1–500) | tous | Non | `25` | Alias rétro-compatible (repli si `MAX_AUDIO_UPLOAD_MB` absent). |
+| `AUDIO_RETENTION_DAYS` | Non (défaut `90`, 1–3650) | tous | Non | `90` | **Canonique** : rétention par défaut des enregistrements. |
+| `RECORDING_RETENTION_DAYS` | Non (défaut `90`, 1–3650) | tous | Non | `90` | Alias rétro-compatible. |
+| `SPEAKER_ASSIGNMENT_CONFIDENCE_THRESHOLD` | Non (défaut `0.75`, 0–1) | tous | Non | `0.75` | Seuil sous lequel le manager doit identifier le commercial (attribution des locuteurs). |
 | `LOG_LEVEL` | Non (défaut `info`) | tous | Non | `info` | Niveau de journalisation (`debug`/`info`/`warn`/`error`). |
 | `ALLOW_DEMO_SEED` | Non (défaut `false`) | démo assumée | Non | `true` | Autorise le seed de démonstration en production (garde-fou). |
 | `PORT` | Non (défaut `3000`) | prod | Non | `3000` | Port d'écoute (fourni par l'hébergeur ; respecté par `next start`). |

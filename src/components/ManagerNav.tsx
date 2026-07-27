@@ -9,7 +9,7 @@ import { LogoutButton } from "@/components/LogoutButton";
 const items = [
   { href: "/manager", label: "Tableau de bord", icon: "▤" },
   { href: "/manager/team", label: "Équipe", icon: "👥" },
-  { href: "/manager/recordings", label: "Base d'appels", icon: "🎧" },
+  { href: "/manager/recordings", label: "Appels modèles", icon: "🎧" },
   { href: "/manager/knowledge", label: "Connaissances", icon: "🧠" },
   { href: "/manager/scenarios", label: "Scénarios", icon: "🎭" },
   { href: "/manager/results", label: "Résultats", icon: "📊" },

@@ -261,6 +261,266 @@ async function main() {
     });
   }
 
+  // ---- Appel modèle fictif « client existant » entièrement traité ----
+  // Démontre le pipeline appel -> exercice : transcript diarisé anonymisé,
+  // analyse structurée et exercice généré (à valider). Aucune donnée réelle.
+  {
+    const modelRec = await prisma.callRecording.create({
+      data: {
+        organizationId: org.id,
+        uploaderId: manager.id,
+        title: "Suivi renouvellement — cliente logiciel",
+        campaign: "Renouvellements",
+        callOutcome: "RAPPEL",
+        language: "fr",
+        tags: JSON.stringify(["renouvellement", "upsell", "client existant"]),
+        consent: true,
+        consentAt: iso(4),
+        useAsModel: true,
+        storageKey: null,
+        mimeType: "audio/mpeg",
+        sizeBytes: 3_100_000,
+        durationSec: 41,
+        status: "READY",
+        detectedCallType: "EXISTING_CUSTOMER",
+        callTypeConfidence: 0.88,
+        referenceSuitabilityScore: 82,
+        usableAsReference: true,
+        enabled: true,
+        processingHash: randomUUID(),
+        createdAt: iso(4),
+        updatedAt: iso(4),
+      },
+    });
+
+    // Segments diarisés : speaker_0 = commercial (AGENT), speaker_1 = cliente (PROSPECT).
+    const modelSegments: Array<{
+      speakerId: string;
+      role: "AGENT" | "PROSPECT";
+      startMs: number;
+      endMs: number;
+      text: string;
+      anonymizedText: string;
+      confidence: number;
+    }> = [
+      { speakerId: "speaker_0", role: "AGENT", startMs: 400, endMs: 5200, confidence: 0.94,
+        text: "Bonjour Madame Lefèvre, c'est Julien de chez NordSoft, je vous appelle pour faire le point sur votre contrat.",
+        anonymizedText: "Bonjour [CLIENTE], c'est [COMMERCIAL] de chez [ENTREPRISE], je vous appelle pour faire le point sur votre contrat." },
+      { speakerId: "speaker_1", role: "PROSPECT", startMs: 5600, endMs: 9200, confidence: 0.91,
+        text: "Ah bonjour Julien, oui justement je voulais vous parler de notre renouvellement.",
+        anonymizedText: "Ah bonjour [COMMERCIAL], oui justement je voulais vous parler de notre renouvellement." },
+      { speakerId: "speaker_0", role: "AGENT", startMs: 9600, endMs: 14200, confidence: 0.93,
+        text: "Parfait. Depuis l'an dernier vous êtes passés à 30 utilisateurs, tout se passe bien ?",
+        anonymizedText: "Parfait. Depuis l'an dernier vous êtes passés à 30 utilisateurs, tout se passe bien ?" },
+      { speakerId: "speaker_1", role: "PROSPECT", startMs: 14600, endMs: 18800, confidence: 0.9,
+        text: "Globalement oui, mais on trouve le module reporting un peu limité.",
+        anonymizedText: "Globalement oui, mais on trouve le module reporting un peu limité." },
+      { speakerId: "speaker_0", role: "AGENT", startMs: 19200, endMs: 24000, confidence: 0.92,
+        text: "Je note. On a justement sorti un module analytics avancé, je peux vous le présenter.",
+        anonymizedText: "Je note. On a justement sorti un module analytics avancé, je peux vous le présenter." },
+      { speakerId: "speaker_1", role: "PROSPECT", startMs: 24400, endMs: 28600, confidence: 0.89,
+        text: "Pourquoi pas, mais attention le budget est serré cette année.",
+        anonymizedText: "Pourquoi pas, mais attention le budget est serré cette année." },
+      { speakerId: "speaker_0", role: "AGENT", startMs: 29000, endMs: 35200, confidence: 0.92,
+        text: "Bien sûr. Vu votre fidélité depuis trois ans, je peux voir ce qu'on peut faire sur le tarif de renouvellement.",
+        anonymizedText: "Bien sûr. Vu votre fidélité depuis trois ans, je peux voir ce qu'on peut faire sur le tarif de renouvellement." },
+      { speakerId: "speaker_1", role: "PROSPECT", startMs: 35600, endMs: 40400, confidence: 0.9,
+        text: "D'accord, envoyez-moi une proposition et on en reparle jeudi.",
+        anonymizedText: "D'accord, envoyez-moi une proposition et on en reparle jeudi." },
+    ];
+
+    const modelTranscript = await prisma.transcript.create({
+      data: {
+        recordingId: modelRec.id,
+        language: "fr",
+        segments: JSON.stringify(
+          modelSegments.map((s) => ({ speaker: s.role, text: s.text, startMs: s.startMs, endMs: s.endMs })),
+        ),
+        commercialSpeakerId: "speaker_0",
+        customerSpeakerId: "speaker_1",
+        speakerAssignmentConfidence: 0.9,
+        speakerAssignmentRationale:
+          "Le locuteur speaker_0 mène l'appel, présente l'offre et propose une prochaine étape ; speaker_1 est la cliente.",
+        provider: "demo",
+        model: "demo-diarize",
+        createdAt: iso(4),
+      },
+    });
+
+    const segIds: string[] = [];
+    for (let j = 0; j < modelSegments.length; j++) {
+      const s = modelSegments[j]!;
+      const seg = await prisma.transcriptSegment.create({
+        data: {
+          transcriptId: modelTranscript.id,
+          idx: j,
+          speakerId: s.speakerId,
+          role: s.role,
+          startMs: s.startMs,
+          endMs: s.endMs,
+          text: s.text,
+          anonymizedText: s.anonymizedText,
+          confidence: s.confidence,
+        },
+      });
+      segIds.push(seg.id);
+    }
+
+    const retainedPractices = [
+      { id: "p_reprise", label: "Réactiver l'historique de la relation", importance: "HIGH",
+        description: "Rappeler le contexte connu (contrat, ancienneté) dès l'ouverture pour ancrer la relation.",
+        evidenceSegmentIds: [segIds[0]!] },
+      { id: "p_decouverte", label: "Découverte sur base existante", importance: "HIGH",
+        description: "Interroger l'usage actuel (nombre d'utilisateurs, satisfaction) avant d'argumenter.",
+        evidenceSegmentIds: [segIds[2]!, segIds[3]!] },
+      { id: "p_upsell", label: "Rebond upsell contextualisé", importance: "MEDIUM",
+        description: "Relier le besoin exprimé (reporting limité) à une offre complémentaire pertinente.",
+        evidenceSegmentIds: [segIds[4]!] },
+      { id: "p_prix", label: "Levier fidélité face à l'objection prix", importance: "HIGH",
+        description: "Utiliser l'ancienneté du client comme levier de négociation sur le renouvellement.",
+        evidenceSegmentIds: [segIds[6]!] },
+    ];
+
+    const modelAnalysis = await prisma.callAnalysis.create({
+      data: {
+        organizationId: org.id,
+        recordingId: modelRec.id,
+        callType: "EXISTING_CUSTOMER",
+        callTypeConfidence: 0.88,
+        relationshipStage: "EXISTING",
+        referenceSuitabilityScore: 82,
+        usable: true,
+        language: "fr",
+        model: "demo-analysis",
+        promptVersion: "v1",
+        summary:
+          "Appel de suivi avec une cliente fidèle : préparation du renouvellement et rebond upsell sur un module analytics, avec une objection budgétaire traitée par le levier fidélité.",
+        customerProfile: JSON.stringify({
+          role: "Responsable achats",
+          context: "Cliente depuis 3 ans, passée à 30 utilisateurs.",
+          needs: ["Reporting plus avancé"],
+          objections: ["Budget serré cette année"],
+          signals: ["Fidèle", "Ouverte à l'upsell"],
+        }),
+        commercialStrategy: JSON.stringify({
+          objective: "Sécuriser le renouvellement et vendre le module analytics.",
+          outcome: "Proposition à envoyer ; point de suivi jeudi.",
+          retainedPractices,
+        }),
+        ambiguities: JSON.stringify([]),
+        referenceSuitability: JSON.stringify({
+          score: 82,
+          usable: true,
+          rationale:
+            "Appel de suivi clair, relation existante bien exploitée, objection prix traitée : bon modèle d'exercice.",
+        }),
+        createdAt: iso(4),
+        updatedAt: iso(4),
+      },
+    });
+
+    const modelScenario = await prisma.scenario.create({
+      data: {
+        organizationId: org.id,
+        authorId: manager.id,
+        name: "Renouvellement client — éditeur logiciel",
+        callType: "EXISTING_CUSTOMER",
+        level: "MOYEN",
+        campaign: "Renouvellements",
+        offer: "Renouvellement annuel + module analytics avancé.",
+        prospectProfile: "Responsable achats d'une PME cliente depuis 3 ans (30 utilisateurs).",
+        initialSituation: "Vous appelez une cliente fidèle pour préparer le renouvellement annuel.",
+        objective: "Sécuriser le renouvellement et proposer le module analytics.",
+        personality: "cordiale, fidèle mais attentive au budget",
+        allowedObjections: JSON.stringify([
+          "Le budget est serré cette année.",
+          "Le reporting actuel est un peu limité.",
+          "Il faut que j'en parle en interne.",
+        ]),
+        secretInfos: JSON.stringify([
+          { question: "budget", answer: "J'ai environ 10% de marge de plus que l'an dernier, mais je ne le dis pas tout de suite." },
+        ]),
+        successConditions: "La cliente accepte de recevoir une proposition renouvellement + analytics.",
+        failureConditions: "La cliente repousse sans aucun engagement.",
+        targetDurationSec: 300,
+        status: "REVIEW_REQUIRED",
+        knowledgeRefs: JSON.stringify([]),
+        sourceRecordingId: modelRec.id,
+        sourceAnalysisId: modelAnalysis.id,
+        generatedByModel: "demo-scenario",
+        promptVersion: "v1",
+        traineeBrief:
+          "Cliente connue depuis 3 ans. Objectif : renouveler le contrat et vendre l'upsell analytics en tenant compte d'un budget annoncé serré.",
+        relationshipHistory:
+          "Cliente depuis 3 ans, passée de 15 à 30 utilisateurs. Globalement satisfaite, reproche un reporting limité.",
+        expectedNextSteps: JSON.stringify(["Envoyer une proposition chiffrée", "Recontacter jeudi"]),
+        targetSkills: JSON.stringify([
+          "Découverte sur base existante",
+          "Upsell contextualisé",
+          "Traitement de l'objection prix",
+          "Ancrage de la relation",
+        ]),
+        coachingReference: JSON.stringify(retainedPractices.map((p) => p.label)),
+        aiProspect: JSON.stringify({
+          persona: "[CLIENTE], responsable achats fidèle mais prudente sur le budget.",
+          behaviorRules: [
+            "Tu connais déjà le commercial et l'éditeur : pas de présentation d'inconnu.",
+            "Tu es globalement satisfaite mais tu cites le reporting limité.",
+            "Tu t'ouvres à l'upsell si le budget est ménagé.",
+          ],
+          prohibitedRevelations: ["Ne révèle pas spontanément ton enveloppe budgétaire réelle."],
+          openingLine: "Ah bonjour, oui justement je voulais vous parler du renouvellement.",
+        }),
+        createdAt: iso(4),
+        updatedAt: iso(3),
+      },
+    });
+
+    await prisma.evaluationRubric.create({
+      data: {
+        organizationId: org.id,
+        scenarioId: modelScenario.id,
+        name: "Grille — Renouvellement client",
+        criteria: JSON.stringify([
+          { key: "reprise_relation", label: "Reprise de la relation", weight: 15,
+            description: "Ancrer l'appel dans l'historique connu du client.",
+            observableSignals: ["Rappelle le contrat / l'ancienneté", "Ton de client connu"],
+            sourcePracticeIds: ["p_reprise"] },
+          { key: "decouverte_existant", label: "Découverte sur l'existant", weight: 25,
+            description: "Vérifier l'usage et la satisfaction avant d'argumenter.",
+            observableSignals: ["Questionne l'usage actuel", "Fait exprimer un besoin"],
+            sourcePracticeIds: ["p_decouverte"] },
+          { key: "upsell", label: "Rebond upsell", weight: 20,
+            description: "Relier le besoin à l'offre analytics.",
+            observableSignals: ["Propose le module au bon moment", "Lie besoin et solution"],
+            sourcePracticeIds: ["p_upsell"] },
+          { key: "objection_prix", label: "Objection prix", weight: 25,
+            description: "Traiter le budget serré via le levier fidélité.",
+            observableSignals: ["Ne baisse pas le prix sans contrepartie", "Valorise la fidélité"],
+            sourcePracticeIds: ["p_prix"] },
+          { key: "conclusion", label: "Conclusion et prochaine étape", weight: 15,
+            description: "Verrouiller un prochain pas daté.",
+            observableSignals: ["Propose une proposition", "Fixe un suivi"],
+            sourcePracticeIds: [] },
+        ]),
+        createdAt: iso(4),
+        updatedAt: iso(3),
+      },
+    });
+
+    await prisma.auditEvent.create({
+      data: {
+        organizationId: org.id,
+        actorId: manager.id,
+        action: "UPLOAD",
+        targetType: "CallRecording",
+        targetId: modelRec.id,
+        metadata: JSON.stringify({ title: modelRec.title, useAsModel: true }),
+        createdAt: iso(4),
+      },
+    });
+  }
+
   // ---- Trois scénarios publiés ----
   const scenarioDefs = [
     {

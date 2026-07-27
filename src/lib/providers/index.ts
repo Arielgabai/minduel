@@ -5,16 +5,31 @@ import {
   demoKnowledgeExtraction,
   demoRealtime,
   demoEvaluation,
+  demoDiarizedTranscription,
+  demoSpeakerAttribution,
+  demoAnonymization,
+  demoCallAnalysis,
+  demoScenarioGeneration,
 } from "./demo";
 import {
   OpenAIRealtimeSessionProvider,
   OpenAIEvaluationProvider,
+  OpenAITranscriptionProvider,
+  OpenAISpeakerAttributionProvider,
+  OpenAIAnonymizationProvider,
+  OpenAICallAnalysisProvider,
+  OpenAIScenarioGenerationProvider,
 } from "./openai";
 import type {
   EvaluationProvider,
   KnowledgeExtractionProvider,
   RealtimeSessionProvider,
   TranscriptionProvider,
+  DiarizedTranscriptionProvider,
+  SpeakerAttributionProvider,
+  AnonymizationProvider,
+  CallAnalysisProvider,
+  ScenarioGenerationProvider,
 } from "./types";
 
 export {
@@ -23,7 +38,14 @@ export {
   isPersistentStorageConfigured,
 } from "./storage";
 export * from "./types";
-export { EvaluationResultSchema } from "./schemas";
+export {
+  EvaluationResultSchema,
+  CallAnalysisResultSchema,
+  ScenarioGenerationResultSchema,
+  SpeakerAttributionSchema,
+  AnonymizationSchema,
+} from "./schemas";
+export { normalizeScenarioWeights } from "./openai";
 
 /**
  * Sélecteurs de providers — séparation EXPLICITE démo / réel (aucune bascule
@@ -50,12 +72,38 @@ class NotImplementedProviderError extends Error {
 
 export function getTranscriptionProvider(): TranscriptionProvider {
   if (isDemoMode()) return demoTranscription;
-  throw new NotImplementedProviderError("La transcription OpenAI");
+  throw new NotImplementedProviderError("La transcription (héritée) OpenAI");
 }
 
 export function getKnowledgeExtractionProvider(): KnowledgeExtractionProvider {
   if (isDemoMode()) return demoKnowledgeExtraction;
   throw new NotImplementedProviderError("L'extraction de connaissances OpenAI");
+}
+
+// --- Pipeline appel -> exercice : providers réels en mode openai, fixtures en démo. ---
+export function getDiarizedTranscriptionProvider(): DiarizedTranscriptionProvider {
+  if (isDemoMode()) return demoDiarizedTranscription;
+  return new OpenAITranscriptionProvider();
+}
+
+export function getSpeakerAttributionProvider(): SpeakerAttributionProvider {
+  if (isDemoMode()) return demoSpeakerAttribution;
+  return new OpenAISpeakerAttributionProvider();
+}
+
+export function getAnonymizationProvider(): AnonymizationProvider {
+  if (isDemoMode()) return demoAnonymization;
+  return new OpenAIAnonymizationProvider();
+}
+
+export function getCallAnalysisProvider(): CallAnalysisProvider {
+  if (isDemoMode()) return demoCallAnalysis;
+  return new OpenAICallAnalysisProvider();
+}
+
+export function getScenarioGenerationProvider(): ScenarioGenerationProvider {
+  if (isDemoMode()) return demoScenarioGeneration;
+  return new OpenAIScenarioGenerationProvider();
 }
 
 export function getEvaluationProvider(): EvaluationProvider {

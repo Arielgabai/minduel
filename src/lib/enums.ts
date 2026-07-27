@@ -15,27 +15,53 @@ export const ScenarioLevel = {
 export type ScenarioLevel = (typeof ScenarioLevel)[keyof typeof ScenarioLevel];
 
 export const CallType = {
+  // Valeurs héritées (compat) :
   VENTE: "VENTE",
   PITCH_INVESTISSEUR: "PITCH_INVESTISSEUR",
   ENTRETIEN_EMBAUCHE: "ENTRETIEN_EMBAUCHE",
+  // Classification du pipeline appel -> exercice :
+  COLD_PROSPECTING: "COLD_PROSPECTING",
+  WARM_PROSPECTING: "WARM_PROSPECTING",
+  FOLLOW_UP: "FOLLOW_UP",
+  EXISTING_CUSTOMER: "EXISTING_CUSTOMER",
+  UPSELL_CROSS_SELL: "UPSELL_CROSS_SELL",
+  RENEWAL: "RENEWAL",
+  RETENTION: "RETENTION",
+  CUSTOMER_SUPPORT: "CUSTOMER_SUPPORT",
+  OTHER: "OTHER",
 } as const;
 export type CallType = (typeof CallType)[keyof typeof CallType];
 
 export const ScenarioStatus = {
   DRAFT: "DRAFT",
+  REVIEW_REQUIRED: "REVIEW_REQUIRED",
   PUBLISHED: "PUBLISHED",
+  ARCHIVED: "ARCHIVED",
 } as const;
 export type ScenarioStatus = (typeof ScenarioStatus)[keyof typeof ScenarioStatus];
 
 export const RecordingStatus = {
   UPLOADED: "UPLOADED",
+  PREPROCESSING: "PREPROCESSING",
   TRANSCRIBING: "TRANSCRIBING",
   ANALYZING: "ANALYZING",
+  WAITING_FOR_CLARIFICATION: "WAITING_FOR_CLARIFICATION",
+  GENERATING_EXERCISE: "GENERATING_EXERCISE",
+  REVIEW_REQUIRED: "REVIEW_REQUIRED",
   READY: "READY",
   FAILED: "FAILED",
 } as const;
 export type RecordingStatus =
   (typeof RecordingStatus)[keyof typeof RecordingStatus];
+
+/** Statuts pour lesquels le pipeline d'un appel est encore en cours (polling côté client). */
+export const RECORDING_IN_PROGRESS_STATUSES: readonly string[] = [
+  RecordingStatus.UPLOADED,
+  RecordingStatus.PREPROCESSING,
+  RecordingStatus.TRANSCRIBING,
+  RecordingStatus.ANALYZING,
+  RecordingStatus.GENERATING_EXERCISE,
+];
 
 export const KnowledgeType = {
   OBJECTION: "OBJECTION",
@@ -103,6 +129,22 @@ export const CALL_TYPE_LABELS: Record<string, string> = {
   VENTE: "Vente",
   PITCH_INVESTISSEUR: "Pitch investisseur",
   ENTRETIEN_EMBAUCHE: "Entretien d'embauche",
+  COLD_PROSPECTING: "Prospection à froid",
+  WARM_PROSPECTING: "Prospection à chaud",
+  FOLLOW_UP: "Relance / suivi",
+  EXISTING_CUSTOMER: "Client existant",
+  UPSELL_CROSS_SELL: "Montée en gamme / vente additionnelle",
+  RENEWAL: "Renouvellement",
+  RETENTION: "Rétention",
+  CUSTOMER_SUPPORT: "Support client",
+  OTHER: "Autre",
+};
+
+export const SCENARIO_STATUS_LABELS: Record<string, string> = {
+  DRAFT: "Brouillon",
+  REVIEW_REQUIRED: "À valider",
+  PUBLISHED: "Publié",
+  ARCHIVED: "Archivé",
 };
 
 export const KNOWLEDGE_TYPE_LABELS: Record<string, string> = {
@@ -117,8 +159,12 @@ export const KNOWLEDGE_TYPE_LABELS: Record<string, string> = {
 
 export const RECORDING_STATUS_LABELS: Record<string, string> = {
   UPLOADED: "Importé",
+  PREPROCESSING: "Préparation",
   TRANSCRIBING: "Transcription",
   ANALYZING: "Analyse",
+  WAITING_FOR_CLARIFICATION: "En attente de précision",
+  GENERATING_EXERCISE: "Génération de l'exercice",
+  REVIEW_REQUIRED: "À valider",
   READY: "Prêt",
   FAILED: "Échec",
 };

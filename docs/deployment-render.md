@@ -76,7 +76,10 @@ AI_PROVIDER=demo                 # ou openai
 OPENAI_API_KEY=                  # requis seulement si AI_PROVIDER=openai
 OPENAI_REALTIME_MODEL=gpt-realtime          # session vocale (WebRTC)
 OPENAI_EVALUATION_MODEL=gpt-4o-mini         # évaluation structurée (Structured Outputs) — modèle DISTINCT du Realtime
-OPENAI_TRANSCRIPTION_MODEL=whisper-1
+OPENAI_TRANSCRIPTION_MODEL=gpt-4o-transcribe-diarize   # transcription diarisée (pipeline appel -> exercice)
+OPENAI_ANALYSIS_MODEL=gpt-5.6-terra         # analyse structurée de l'appel modèle (Responses API)
+OPENAI_SCENARIO_MODEL=gpt-5.6-terra         # génération du scénario + grille (Responses API)
+OPENAI_ANALYSIS_REASONING_EFFORT=medium     # minimal|low|medium|high
 OPENAI_REALTIME_VOICE=marin
 STORAGE_DRIVER=s3
 S3_BUCKET=<bucket>
@@ -86,9 +89,16 @@ S3_ACCESS_KEY_ID=<clé>
 S3_SECRET_ACCESS_KEY=<secret>
 S3_FORCE_PATH_STYLE=false
 SIGNED_URL_TTL_SECONDS=300
-MAX_AUDIO_SIZE_MB=25
+MAX_AUDIO_UPLOAD_MB=100          # appels réels 15-20 min (canonique)
+AUDIO_RETENTION_DAYS=90
+SPEAKER_ASSIGNMENT_CONFIDENCE_THRESHOLD=0.75
 LOG_LEVEL=info
 ```
+
+> **`ffmpeg`/`ffprobe` sont facultatifs.** Le pré-traitement audio détecte le format via les
+> *magic bytes* et enrichit les métadonnées avec `ffprobe` **s'il est présent** ; en son absence,
+> il dégrade proprement (aucune dépendance dure). Le découpage des longs fichiers est délégué au
+> `chunking_strategy: auto` d'OpenAI.
 
 > Ne pas définir `ALLOW_DEMO_SEED` en vraie production (laisser absent ou `false`).
 
@@ -116,6 +126,11 @@ LOG_LEVEL=info
 > Le mode démo n'effectue pas de traitement long réel via OpenAI, mais le worker reste utile pour
 > consommer la file (`ProcessingJob`) de façon fiable et idempotente (l'évaluation démo passe
 > également par la même tâche).
+>
+> **Le pipeline appel → exercice dépend aussi du worker.** Les étapes `PREPROCESS_RECORDING`,
+> `TRANSCRIBE_RECORDING`, `ANALYZE_REFERENCE_CALL` et `GENERATE_SCENARIO_FROM_CALL` s'exécutent
+> exclusivement dans le worker (transcription diarisée, analyse et génération via OpenAI). Sans
+> worker, un appel modèle importé reste bloqué en `PREPROCESSING` et aucun exercice n'est généré.
 
 ## 6. Déployer et vérifier
 

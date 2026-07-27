@@ -31,12 +31,14 @@ export async function POST(req: Request) {
 
     const form = await req.formData();
     const file = form.get("file");
-    const title = String(form.get("title") ?? "").trim();
     const consent = String(form.get("consent") ?? "") === "true";
+    // Seuls `file` + `consent` sont requis. Le reste est optionnel.
     const campaign = String(form.get("campaign") ?? "").trim() || null;
     const callOutcome = String(form.get("callOutcome") ?? "").trim() || null;
     const language = String(form.get("language") ?? "fr").trim() || "fr";
     const managerNote = String(form.get("managerNote") ?? "").trim() || null;
+    // Utiliser cet appel comme appel modèle (pipeline de génération d'exercice). Défaut : oui.
+    const useAsModel = String(form.get("useAsModel") ?? "true") !== "false";
     const tagsRaw = String(form.get("tags") ?? "").trim();
     const tags = tagsRaw
       ? JSON.stringify(tagsRaw.split(",").map((t) => t.trim()).filter(Boolean))
@@ -45,15 +47,21 @@ export async function POST(req: Request) {
     if (!consent) {
       return fail(400, "Le consentement / la base légale de traitement est obligatoire.");
     }
-    if (!title) return fail(422, "Le titre est requis.");
     if (!(file instanceof File)) return fail(422, "Fichier audio manquant.");
+
+    // Titre optionnel : dérivé du nom de fichier si absent (jamais utilisé comme clé de stockage).
+    const providedTitle = String(form.get("title") ?? "").trim();
+    const title =
+      providedTitle ||
+      path.basename(file.name, path.extname(file.name)).slice(0, 120) ||
+      "Appel importé";
 
     // Validation MIME + extension côté serveur.
     const ext = path.extname(file.name).toLowerCase();
     const mimeOk = ACCEPTED_AUDIO_MIME.includes(file.type);
     const extOk = ACCEPTED_AUDIO_EXT.includes(ext);
     if (!mimeOk && !extOk) {
-      return fail(415, "Format non supporté. Formats acceptés : MP3, WAV, M4A.");
+      return fail(415, "Format non supporté. Formats acceptés : MP3, WAV, M4A, WebM.");
     }
 
     // Limite de taille configurable.
@@ -102,6 +110,8 @@ export async function POST(req: Request) {
           tags,
           managerNote,
           consent,
+          consentAt: now,
+          useAsModel,
           storageKey,
           mimeType: contentType,
           sizeBytes: file.size,
@@ -125,17 +135,19 @@ export async function POST(req: Request) {
       action: "UPLOAD",
       targetType: "CallRecording",
       targetId: rec.id,
-      metadata: { title, sizeBytes: file.size },
+      metadata: { title, sizeBytes: file.size, consent, useAsModel },
     });
 
     // Met le traitement en file (persistant) : le worker le prendra en charge ;
     // en dev, l'endpoint /process peut le déclencher en ligne.
+    // - useAsModel : pipeline appel -> exercice (preprocess -> ... -> génération).
+    // - sinon : ancien pipeline d'extraction de connaissances.
     await enqueueJob({
       organizationId: manager.organizationId,
-      type: JobType.RECORDING_PIPELINE,
+      type: useAsModel ? JobType.PREPROCESS_RECORDING : JobType.RECORDING_PIPELINE,
       targetId: rec.id,
     });
 
-    return ok({ id: rec.id, status: rec.status }, 201);
+    return ok({ id: rec.id, status: rec.status, useAsModel }, 201);
   });
 }

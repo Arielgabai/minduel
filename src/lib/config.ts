@@ -32,15 +32,23 @@ export const serverConfig = {
       realtime: env.OPENAI_REALTIME_MODEL,
       transcribe: env.OPENAI_TRANSCRIPTION_MODEL,
       evaluation: env.OPENAI_EVALUATION_MODEL,
+      analysis: env.OPENAI_ANALYSIS_MODEL,
+      scenario: env.OPENAI_SCENARIO_MODEL,
+      analysisReasoningEffort: env.OPENAI_ANALYSIS_REASONING_EFFORT,
       realtimeVoice: env.OPENAI_REALTIME_VOICE,
     };
+  },
+  /** Seuil de confiance minimal pour valider l'attribution des locuteurs sans clarification. */
+  get speakerAssignmentConfidenceThreshold(): number {
+    return getServerEnv().SPEAKER_ASSIGNMENT_CONFIDENCE_THRESHOLD;
   },
   get storage() {
     const env = getServerEnv();
     return {
       driver: env.STORAGE_DRIVER,
       dir: env.AUDIO_STORAGE_DIR,
-      maxUploadMb: env.MAX_AUDIO_SIZE_MB,
+      // Nouvelle variable canonique ; MAX_AUDIO_SIZE_MB conservé pour compat.
+      maxUploadMb: env.MAX_AUDIO_UPLOAD_MB,
       signedUrlTtlSec: env.SIGNED_URL_TTL_SECONDS,
       s3: {
         bucket: env.S3_BUCKET ?? "",
@@ -53,7 +61,7 @@ export const serverConfig = {
     };
   },
   get retentionDays(): number {
-    return getServerEnv().RECORDING_RETENTION_DAYS;
+    return getServerEnv().AUDIO_RETENTION_DAYS;
   },
   get logLevel(): string {
     return getServerEnv().LOG_LEVEL;
@@ -78,6 +86,8 @@ export const ACCEPTED_AUDIO_MIME = [
   "audio/mp4", // m4a
   "audio/x-m4a",
   "audio/aac",
+  "audio/webm", // webm (enregistrements navigateur)
+  "video/webm",
 ];
 
-export const ACCEPTED_AUDIO_EXT = [".mp3", ".wav", ".m4a"];
+export const ACCEPTED_AUDIO_EXT = [".mp3", ".wav", ".m4a", ".webm"];
