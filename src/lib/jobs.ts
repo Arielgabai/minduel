@@ -1,6 +1,7 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
+import { serverConfig } from "./config";
 import { log, safeErrorMessage } from "./log";
 import { runRecordingPipeline, markRecordingFailed } from "./recordingService";
 import {
@@ -281,9 +282,105 @@ async function failJob(
   });
 }
 
+/**
+ * Rafraîchit le `lockedAt` d'un job détenu par ce worker. Vrai si le lock
+ * appartient toujours à `workerId` (donc à ce processus), faux si un autre
+ * worker l'a récupéré ou si le job a été supprimé/complété entre-temps.
+ * Utilisé par le heartbeat pour empêcher un vol de lock sur un job long
+ * (transcription de plusieurs minutes).
+ */
+export async function heartbeatJob(input: {
+  id: string;
+  workerId: string;
+}): Promise<boolean> {
+  const res = await prisma.processingJob.updateMany({
+    where: { id: input.id, lockedBy: input.workerId, status: JobStatus.RUNNING },
+    data: { lockedAt: new Date() },
+  });
+  return res.count === 1;
+}
+
+/**
+ * Récupère les jobs RUNNING dont le `lockedAt` est plus vieux que `staleMs` :
+ * le worker précédent a crashé ou a été redéployé sans finir le job. On les
+ * remet en PENDING avec un léger `runAfter` pour laisser un autre worker
+ * les reprendre proprement (attempts déjà incrémenté à la claim précédente,
+ * donc le compteur reste borné).
+ */
+export async function reclaimStaleJobs(staleMs: number): Promise<number> {
+  const cutoff = new Date(Date.now() - staleMs);
+  const res = await prisma.processingJob.updateMany({
+    where: {
+      status: JobStatus.RUNNING,
+      lockedAt: { lt: cutoff },
+    },
+    data: {
+      status: JobStatus.PENDING,
+      lockedAt: null,
+      lockedBy: null,
+      runAfter: new Date(),
+    },
+  });
+  if (res.count > 0) {
+    log.warn("job.reclaimed_stale", { count: res.count, staleMs });
+  }
+  return res.count;
+}
+
+/**
+ * Démarre un heartbeat périodique sur un job. La promesse retournée est un
+ * `stop()` idempotent qui doit être appelé une fois la tâche terminée. Si un
+ * heartbeat échoue à réserver le lock (autre worker propriétaire), l'intervalle
+ * s'arrête de lui-même pour ne pas polluer les logs.
+ */
+function startHeartbeat(job: ClaimedJob, workerId: string): () => void {
+  const intervalMs = serverConfig.worker.heartbeatMs;
+  let stopped = false;
+  const handle = setInterval(() => {
+    // `void` pour ne pas awaiter dans setInterval ; les erreurs sont loggées.
+    void heartbeatJob({ id: job.id, workerId })
+      .then((held) => {
+        if (!held && !stopped) {
+          stopped = true;
+          clearInterval(handle);
+          log.warn("job.heartbeat_lost", {
+            jobId: job.id,
+            type: job.type,
+            workerId,
+          });
+        }
+      })
+      .catch((err) => {
+        log.warn("job.heartbeat_error", {
+          jobId: job.id,
+          type: job.type,
+          errorMessage: safeErrorMessage(err),
+        });
+      });
+  }, intervalMs);
+  // Ne pas retenir le process Node juste pour ce timer.
+  if (typeof handle === "object" && handle !== null && "unref" in handle) {
+    (handle as { unref: () => void }).unref();
+  }
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(handle);
+  };
+}
+
 /** Exécute une tâche déjà réclamée (dispatch par type). */
-export async function runClaimedJob(job: ClaimedJob): Promise<void> {
+export async function runClaimedJob(
+  job: ClaimedJob,
+  options: { workerId?: string } = {},
+): Promise<void> {
   const startedAt = Date.now();
+  // Heartbeat uniquement quand un vrai worker exécute (workerId fourni). Le
+  // dev inline (`kickJob`) tourne dans une requête HTTP et n'a pas besoin de
+  // rafraîchir un lock qui ne sera pas volé.
+  const stopHeartbeat = options.workerId
+    ? startHeartbeat(job, options.workerId)
+    : () => undefined;
   try {
     switch (job.type) {
       case JobType.RECORDING_PIPELINE:
@@ -317,6 +414,8 @@ export async function runClaimedJob(job: ClaimedJob): Promise<void> {
     });
   } catch (err) {
     await failJob(job, safeErrorMessage(err), isPermanentError(err));
+  } finally {
+    stopHeartbeat();
   }
 }
 

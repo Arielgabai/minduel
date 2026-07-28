@@ -5,7 +5,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { getServerEnv } from "../lib/env";
 import { log } from "../lib/log";
-import { claimJob, runClaimedJob } from "../lib/jobs";
+import { claimJob, runClaimedJob, reclaimStaleJobs } from "../lib/jobs";
 import { prisma } from "../lib/db";
 
 /**
@@ -23,6 +23,10 @@ import { prisma } from "../lib/db";
 const WORKER_ID = `worker-${process.pid}-${randomBytes(3).toString("hex")}`;
 const IDLE_POLL_MS = 2_000;
 const HEARTBEAT_MS = 30_000;
+// Balayage périodique des jobs RUNNING dont le lock est expiré (worker mort ou
+// redéployé). Rare en régime nominal : le heartbeat par job garde le lock frais
+// pendant tout un traitement long (transcription 15 min). Borné à 60 s.
+const STALE_LOCK_SWEEP_MS = 60_000;
 // Surcouchable pour aligner la sonde d'orchestrateur sur un autre chemin.
 const HEARTBEAT_FILE = process.env.WORKER_HEARTBEAT_FILE ?? join(tmpdir(), "minduel-worker-heartbeat");
 
@@ -46,19 +50,39 @@ async function main(): Promise<void> {
     workerId: WORKER_ID,
     aiProvider: env.AI_PROVIDER,
     transcriptionModel: env.OPENAI_TRANSCRIPTION_MODEL,
+    transcriptionTimeoutMs: env.OPENAI_TRANSCRIPTION_TIMEOUT_MS,
+    transcribeMaxAttempts: env.TRANSCRIBE_RECORDING_MAX_ATTEMPTS,
     analysisModel: env.OPENAI_ANALYSIS_MODEL,
     scenarioModel: env.OPENAI_SCENARIO_MODEL,
     evaluationModel: env.OPENAI_EVALUATION_MODEL,
+    heartbeatMs: env.WORKER_HEARTBEAT_MS,
+    staleLockMs: env.WORKER_STALE_LOCK_MS,
   });
   touchHeartbeat();
 
   let lastHeartbeat = 0;
+  let lastStaleSweep = 0;
 
   while (running) {
     if (Date.now() - lastHeartbeat > HEARTBEAT_MS) {
       log.info("worker.heartbeat", { workerId: WORKER_ID });
       touchHeartbeat();
       lastHeartbeat = Date.now();
+    }
+
+    // Balayage périodique des jobs RUNNING orphelins (worker précédent crashé).
+    // Idempotent : les jobs actifs voient leur lockedAt rafraîchi par le
+    // heartbeat interne (voir startHeartbeat dans src/lib/jobs.ts).
+    if (Date.now() - lastStaleSweep > STALE_LOCK_SWEEP_MS) {
+      try {
+        await reclaimStaleJobs(env.WORKER_STALE_LOCK_MS);
+      } catch (err) {
+        log.warn("worker.stale_sweep_error", {
+          workerId: WORKER_ID,
+          error: err instanceof Error ? err.message.slice(0, 300) : String(err),
+        });
+      }
+      lastStaleSweep = Date.now();
     }
 
     let processedSomething = false;
@@ -71,9 +95,10 @@ async function main(): Promise<void> {
           type: job.type,
           targetId: job.targetId,
           attempts: job.attempts,
+          maxAttempts: job.maxAttempts,
           workerId: WORKER_ID,
         });
-        await runClaimedJob(job);
+        await runClaimedJob(job, { workerId: WORKER_ID });
       }
     } catch (err) {
       log.error("worker.loop_error", {

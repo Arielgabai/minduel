@@ -1,4 +1,5 @@
 import "server-only";
+import { Agent } from "undici";
 import { serverConfig } from "../config";
 import { DIARIZATION_TRANSCRIPTION_MODEL } from "../env";
 import { PermanentJobError, httpFailureToError } from "../jobErrors";
@@ -519,6 +520,43 @@ async function callResponsesApi(input: {
 }
 
 // ---- Transcription diarisée réelle ----------------------------------------
+
+/**
+ * Erreur de timeout de la transcription, marquée rejouable.
+ * Un timeout au niveau des en-têtes/corps HTTP est un incident transitoire :
+ * réseau ou latence OpenAI. On le distingue explicitement pour l'observabilité
+ * (log `transcription.request_timeout`) tout en le laissant retryable par la
+ * file, contrairement à un 400 de configuration.
+ */
+export class TranscriptionTimeoutError extends Error {
+  readonly transient = true;
+  constructor(
+    message: string,
+    readonly timeoutMs: number,
+    readonly elapsedMs: number,
+  ) {
+    super(message);
+    this.name = "TranscriptionTimeoutError";
+  }
+}
+
+function isAbortLikeError(err: unknown): boolean {
+  if (err instanceof Error) {
+    // AbortSignal.timeout -> TimeoutError, AbortController.abort -> AbortError,
+    // undici header/body timeout -> HeadersTimeoutError / BodyTimeoutError,
+    // socket disconnect -> SocketError.
+    return (
+      err.name === "TimeoutError" ||
+      err.name === "AbortError" ||
+      err.name === "HeadersTimeoutError" ||
+      err.name === "BodyTimeoutError" ||
+      err.name === "SocketError" ||
+      /\btimeout\b/i.test(err.message)
+    );
+  }
+  return false;
+}
+
 export class OpenAITranscriptionProvider implements DiarizedTranscriptionProvider {
   async transcribeDiarized(input: {
     storageKey: string | null;
@@ -557,39 +595,35 @@ export class OpenAITranscriptionProvider implements DiarizedTranscriptionProvide
     form.append("chunking_strategy", "auto");
     form.append("language", language);
 
-    // Modèle effectif tracé juste avant l'appel : rend immédiatement lisible,
-    // sur un 400, quel modèle a réellement été utilisé.
-    log.info("transcription.request", {
+    // Timeout dédié à la transcription. La valeur par défaut d'undici pour
+    // headersTimeout / bodyTimeout est de 300 s : trop court pour un fichier
+    // audio de plusieurs Mo (OpenAI met plusieurs minutes à répondre). Sans
+    // override, le worker voyait en prod un `retry_scheduled` toutes les
+    // ~5 min sur AUCUN statut HTTP -- c'était undici qui coupait.
+    const timeoutMs = serverConfig.worker.transcriptionTimeoutMs;
+    // Dispatcher local (jamais installé globalement) : les autres appels
+    // OpenAI et le provider Realtime gardent le comportement par défaut.
+    // maxRetries / RetryHandler d'undici NE sont PAS activés : la file
+    // ProcessingJob est la seule autorité de rejeu (pas de retries nichés).
+    const dispatcher = new Agent({
+      headersTimeout: timeoutMs,
+      bodyTimeout: timeoutMs,
+      connectTimeout: 10_000,
+    });
+    const outerSignal = AbortSignal.timeout(timeoutMs);
+
+    // Modèle effectif et paramètres tracés juste avant l'appel : rend
+    // immédiatement lisible, sur un timeout ou un 400, ce qui a été envoyé.
+    log.info("transcription.request_started", {
       model,
       responseFormat: "diarized_json",
       chunkingStrategy: "auto",
       language,
       bytes: bytes.length,
+      timeoutMs,
     });
 
-    const res = await fetch(`${OPENAI_BASE}/audio/transcriptions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${serverConfig.openaiApiKey}` },
-      body: form,
-    });
-
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      log.error("transcription.openai_error", {
-        status: res.status,
-        model,
-        requestId: res.headers.get("x-request-id") ?? undefined,
-        detail: safeErrorMessage(detail),
-      });
-      // 400/401/403/422 = requête invalide (modèle, paramètre, clé) : inutile de
-      // rejouer six fois. 429/5xx restent rejouables avec backoff.
-      throw httpFailureToError(
-        res.status,
-        `OpenAI transcription error ${res.status} (model=${model})`,
-      );
-    }
-
-    const data = (await res.json()) as {
+    let data: {
       language?: string;
       duration?: number;
       text?: string;
@@ -603,6 +637,71 @@ export class OpenAITranscriptionProvider implements DiarizedTranscriptionProvide
         avg_logprob?: number;
       }>;
     };
+    let requestId: string | undefined;
+    try {
+      let res: Response;
+      try {
+        res = await fetch(`${OPENAI_BASE}/audio/transcriptions`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${serverConfig.openaiApiKey}` },
+          body: form,
+          signal: outerSignal,
+          // `dispatcher` n'est pas dans le lib.dom.d.ts standard mais Node le
+          // reconnaît (undici sous-jacent). Cast local pour éviter un any global.
+          ...({ dispatcher } as { dispatcher: Agent }),
+        });
+      } catch (err) {
+        const elapsedMs = Date.now() - startedAt;
+        if (isAbortLikeError(err)) {
+          log.warn("transcription.request_timeout", {
+            model,
+            timeoutMs,
+            elapsedMs,
+            errorName: err instanceof Error ? err.name : "Unknown",
+            errorMessage: safeErrorMessage(err),
+          });
+          throw new TranscriptionTimeoutError(
+            `Transcription OpenAI interrompue avant réponse (timeout=${timeoutMs} ms, ` +
+              `elapsed=${elapsedMs} ms). Aucune réponse HTTP reçue.`,
+            timeoutMs,
+            elapsedMs,
+          );
+        }
+        log.error("transcription.request_failed", {
+          model,
+          timeoutMs,
+          elapsedMs,
+          errorName: err instanceof Error ? err.name : "Unknown",
+          errorMessage: safeErrorMessage(err),
+        });
+        throw err;
+      }
+
+      requestId = res.headers.get("x-request-id") ?? undefined;
+
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        log.error("transcription.openai_error", {
+          status: res.status,
+          model,
+          elapsedMs: Date.now() - startedAt,
+          requestId,
+          detail: safeErrorMessage(detail),
+        });
+        // 400/401/403/422 = requête invalide (modèle, paramètre, clé) : inutile
+        // de rejouer. 429/5xx restent rejouables avec backoff.
+        throw httpFailureToError(
+          res.status,
+          `OpenAI transcription error ${res.status} (model=${model})`,
+        );
+      }
+
+      data = (await res.json()) as typeof data;
+    } finally {
+      // Toujours libérer les connexions, même en cas d'erreur au parsing JSON,
+      // pour ne pas laisser fuir de sockets au fil des retries.
+      await dispatcher.close().catch(() => undefined);
+    }
 
     const rawSegments = data.segments ?? [];
     const segments: DiarizedSegment[] = rawSegments
@@ -624,10 +723,11 @@ export class OpenAITranscriptionProvider implements DiarizedTranscriptionProvide
       throw new Error("Transcription vide : aucun segment exploitable renvoyé par OpenAI.");
     }
 
-    log.info("transcription.completed", {
+    const durationMs = Date.now() - startedAt;
+    log.info("transcription.request_completed", {
       model,
-      durationMs: Date.now() - startedAt,
-      requestId: res.headers.get("x-request-id") ?? undefined,
+      durationMs,
+      requestId,
       segmentCount: segments.length,
     });
 
