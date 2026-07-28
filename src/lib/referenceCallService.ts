@@ -96,10 +96,14 @@ export async function preprocessRecording(
     });
   }
 
+  // La transcription est coûteuse (audio complet renvoyé à chaque essai) :
+  // on borne strictement à `transcribeMaxAttempts` (défaut : 2). Au-delà,
+  // un retry manuel manager est plus approprié qu'une boucle automatique.
   await enqueueJob({
     organizationId,
     type: JobType.TRANSCRIBE_RECORDING,
     targetId: recordingId,
+    maxAttempts: serverConfig.worker.transcribeMaxAttempts,
   });
   log.info("recording.preprocessing_completed", {
     organizationId,
@@ -282,7 +286,7 @@ export async function analyzeReferenceCall(
   });
   if (rec.status === RecordingStatus.READY) return;
   if (!rec.transcript) {
-    await enqueueJob({ organizationId, type: JobType.TRANSCRIBE_RECORDING, targetId: recordingId });
+    await enqueueJob({ organizationId, type: JobType.TRANSCRIBE_RECORDING, targetId: recordingId, maxAttempts: serverConfig.worker.transcribeMaxAttempts });
     return;
   }
 

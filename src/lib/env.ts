@@ -69,6 +69,23 @@ const rawSchema = z
     OPENAI_REALTIME_MODEL: z.string().default("gpt-realtime"),
     // Transcription diarisée par défaut pour le pipeline appel -> exercice.
     OPENAI_TRANSCRIPTION_MODEL: z.string().default("gpt-4o-transcribe-diarize"),
+    // Délai maximal d'un appel de transcription (envoi audio + traitement OpenAI
+    // + réception JSON). Défaut 15 min ; le défaut undici de 300 s est trop
+    // court pour un fichier de plusieurs mégaoctets et fait timeouter en prod
+    // avec un `retry_scheduled` toutes les ~5 min. Bornage [60 s ; 60 min].
+    OPENAI_TRANSCRIPTION_TIMEOUT_MS: intFromString(900_000, 60_000, 3_600_000),
+    // Nombre maximum de tentatives pour un job TRANSCRIBE_RECORDING. La
+    // transcription est coûteuse (audio complet renvoyé à chaque essai) et les
+    // erreurs transitoires légitimes se résolvent en 1 retry ; au-delà, mieux
+    // vaut un retry manuel manager après diagnostic.
+    TRANSCRIBE_RECORDING_MAX_ATTEMPTS: intFromString(2, 1, 5),
+    // Battement de cœur du worker pour rafraîchir lockedAt pendant un job long
+    // (défaut 30 s). Doit rester nettement inférieur à WORKER_STALE_LOCK_MS.
+    WORKER_HEARTBEAT_MS: intFromString(30_000, 5_000, 300_000),
+    // Âge à partir duquel un lock RUNNING est considéré orphelin (worker crashé
+    // ou redéployé) et peut être récupéré par un autre worker. Doit être
+    // supérieur au plus long job attendu — la transcription en pratique.
+    WORKER_STALE_LOCK_MS: intFromString(1_200_000, 60_000, 7_200_000),
     OPENAI_EVALUATION_MODEL: z.string().default("gpt-4o-mini"),
     // Modèles (Responses API) pour l'analyse structurée et la génération de scénario.
     OPENAI_ANALYSIS_MODEL: z.string().default("gpt-5.6-terra"),
@@ -144,6 +161,29 @@ const rawSchema = z
           `Le pipeline appel -> exercice requiert la diarisation ; les modèles non diarisants ` +
           `(gpt-4o-transcribe, gpt-4o-mini-transcribe, whisper-1) ne renvoient pas de locuteurs ` +
           `et rejettent chunking_strategy (HTTP 400). Aucune bascule silencieuse n'est effectuée.`,
+      });
+    }
+    // Cohérence heartbeat / stale lock : le heartbeat doit rester nettement
+    // sous le seuil de stale, sinon un lock actif serait faussement volé.
+    if (val.WORKER_HEARTBEAT_MS >= val.WORKER_STALE_LOCK_MS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["WORKER_HEARTBEAT_MS"],
+        message:
+          "doit être strictement inférieur à WORKER_STALE_LOCK_MS pour qu'un job actif " +
+          "ne soit jamais considéré orphelin par un autre worker.",
+      });
+    }
+    // Le stale-lock doit dépasser la durée maximale d'une transcription, sinon
+    // un worker sain qui tient une requête OpenAI de 15 min verrait son lock
+    // volé avant la fin.
+    if (val.WORKER_STALE_LOCK_MS <= val.OPENAI_TRANSCRIPTION_TIMEOUT_MS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["WORKER_STALE_LOCK_MS"],
+        message:
+          "doit être supérieur à OPENAI_TRANSCRIPTION_TIMEOUT_MS pour ne pas voler le lock " +
+          "d'un worker en train d'attendre légitimement la fin d'une transcription.",
       });
     }
     if (val.STORAGE_DRIVER === "s3") {

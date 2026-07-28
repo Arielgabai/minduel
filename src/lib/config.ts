@@ -42,6 +42,19 @@ export const serverConfig = {
   get speakerAssignmentConfidenceThreshold(): number {
     return getServerEnv().SPEAKER_ASSIGNMENT_CONFIDENCE_THRESHOLD;
   },
+  /**
+   * Paramètres du worker / file : timeouts et politique de retry. Exposés ici
+   * pour éviter de propager `getServerEnv()` dans tous les modules métier.
+   */
+  get worker() {
+    const env = getServerEnv();
+    return {
+      transcriptionTimeoutMs: env.OPENAI_TRANSCRIPTION_TIMEOUT_MS,
+      transcribeMaxAttempts: env.TRANSCRIBE_RECORDING_MAX_ATTEMPTS,
+      heartbeatMs: env.WORKER_HEARTBEAT_MS,
+      staleLockMs: env.WORKER_STALE_LOCK_MS,
+    };
+  },
   get storage() {
     const env = getServerEnv();
     return {
