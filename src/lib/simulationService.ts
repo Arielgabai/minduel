@@ -13,6 +13,7 @@ import { SimulationStatus } from "./enums";
 import { HttpError } from "./httpError";
 import { log, safeErrorMessage } from "./log";
 import { JobType } from "./jobTypes";
+import { isFailedJobStatus } from "./jobStatus";
 
 /** URL de la page d'analyse d'une simulation (jamais /app). */
 export function analysisUrlFor(simulationId: string): string {
@@ -227,7 +228,9 @@ export async function finalizeSimulation(input: {
     },
     select: { status: true },
   });
-  if (existingJob && existingJob.status !== "FAILED") {
+  // Seul un échec définitif autorise la recréation ; toute autre tâche
+  // existante (en attente, en cours, terminée) est laissée telle quelle.
+  if (existingJob && !isFailedJobStatus(existingJob.status)) {
     return { kind: "pending", analysisUrl };
   }
 
@@ -259,7 +262,16 @@ export async function finalizeSimulation(input: {
         status: "PENDING",
         maxAttempts: 5,
       },
-      update: { status: "PENDING", runAfter: new Date(), lastError: null },
+      // Relance explicite après échec définitif : compteur remis à zéro, sinon
+      // la tâche resterait ignorée par claimJob (attempts >= maxAttempts).
+      update: {
+        status: "PENDING",
+        attempts: 0,
+        runAfter: new Date(),
+        lastError: null,
+        lockedAt: null,
+        lockedBy: null,
+      },
     });
   });
 

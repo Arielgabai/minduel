@@ -1,5 +1,7 @@
 import "server-only";
 import { serverConfig } from "../config";
+import { DIARIZATION_TRANSCRIPTION_MODEL } from "../env";
+import { PermanentJobError, httpFailureToError } from "../jobErrors";
 import { log, safeErrorMessage } from "../log";
 import { CallType } from "../enums";
 import {
@@ -460,7 +462,10 @@ async function callResponsesApi(input: {
       requestId: res.headers.get("x-request-id") ?? undefined,
       detail: safeErrorMessage(detail),
     });
-    throw new Error(`OpenAI Responses error ${res.status} (${input.schemaName})`);
+    throw httpFailureToError(
+      res.status,
+      `OpenAI Responses error ${res.status} (${input.schemaName}, model=${input.model})`,
+    );
   }
 
   const data = (await res.json()) as {
@@ -529,17 +534,38 @@ export class OpenAITranscriptionProvider implements DiarizedTranscriptionProvide
       throw new Error("Transcription impossible : fichier audio introuvable dans le stockage.");
     }
     const model = serverConfig.models.transcribe;
+    // Garde-fou d'exécution : l'environnement est déjà validé au démarrage, mais
+    // le pipeline ne doit jamais partir sur un modèle non diarisant (aucun
+    // locuteur en sortie, et chunking_strategy rejeté en 400).
+    if (model !== DIARIZATION_TRANSCRIPTION_MODEL) {
+      throw new PermanentJobError(
+        `Configuration invalide : OPENAI_TRANSCRIPTION_MODEL="${model}" ne supporte pas la ` +
+          `diarisation. Le pipeline appel -> exercice exige "${DIARIZATION_TRANSCRIPTION_MODEL}".`,
+      );
+    }
     const startedAt = Date.now();
 
     const form = new FormData();
     const blob = new Blob([new Uint8Array(bytes)], {
       type: input.mimeType || "application/octet-stream",
     });
+    const language = input.language || "fr";
     form.append("file", blob, filenameFromKey(input.storageKey));
     form.append("model", model);
     form.append("response_format", "diarized_json");
+    // Uniquement supporté par le modèle diarisant (400 sur les autres).
     form.append("chunking_strategy", "auto");
-    if (input.language) form.append("language", input.language);
+    form.append("language", language);
+
+    // Modèle effectif tracé juste avant l'appel : rend immédiatement lisible,
+    // sur un 400, quel modèle a réellement été utilisé.
+    log.info("transcription.request", {
+      model,
+      responseFormat: "diarized_json",
+      chunkingStrategy: "auto",
+      language,
+      bytes: bytes.length,
+    });
 
     const res = await fetch(`${OPENAI_BASE}/audio/transcriptions`, {
       method: "POST",
@@ -551,10 +577,16 @@ export class OpenAITranscriptionProvider implements DiarizedTranscriptionProvide
       const detail = await res.text().catch(() => "");
       log.error("transcription.openai_error", {
         status: res.status,
+        model,
         requestId: res.headers.get("x-request-id") ?? undefined,
         detail: safeErrorMessage(detail),
       });
-      throw new Error(`OpenAI transcription error ${res.status}`);
+      // 400/401/403/422 = requête invalide (modèle, paramètre, clé) : inutile de
+      // rejouer six fois. 429/5xx restent rejouables avec backoff.
+      throw httpFailureToError(
+        res.status,
+        `OpenAI transcription error ${res.status} (model=${model})`,
+      );
     }
 
     const data = (await res.json()) as {

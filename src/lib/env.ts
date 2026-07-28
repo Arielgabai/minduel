@@ -15,6 +15,17 @@ import { z } from "zod";
  * - Aucun secret ne commence par NEXT_PUBLIC_.
  */
 
+/**
+ * Seul modèle de transcription OpenAI produisant une diarisation (segments
+ * attribués à un locuteur). Le pipeline appel -> exercice en dépend : sans
+ * locuteurs, ni l'attribution commercial/client ni l'analyse ne sont possibles.
+ *
+ * C'est aussi le seul modèle acceptant `chunking_strategy` : l'envoyer à
+ * `gpt-4o-transcribe`, `gpt-4o-mini-transcribe` ou Whisper provoque un
+ * 400 « chunking_strategy is not supported with this model ».
+ */
+export const DIARIZATION_TRANSCRIPTION_MODEL = "gpt-4o-transcribe-diarize";
+
 const boolish = (def: boolean) =>
   z
     .string()
@@ -116,6 +127,23 @@ const rawSchema = z
         path: ["OPENAI_API_KEY"],
         message:
           "OPENAI_API_KEY est requis lorsque AI_PROVIDER=openai (aucune bascule silencieuse vers le mode démo).",
+      });
+    }
+    // Le pipeline appel -> exercice exige des segments par locuteur : on refuse
+    // de démarrer sur un modèle non diarisant plutôt que de basculer en douce
+    // vers gpt-4o-transcribe / whisper / le mode démo.
+    if (
+      val.AI_PROVIDER === "openai" &&
+      val.OPENAI_TRANSCRIPTION_MODEL !== DIARIZATION_TRANSCRIPTION_MODEL
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["OPENAI_TRANSCRIPTION_MODEL"],
+        message:
+          `doit valoir "${DIARIZATION_TRANSCRIPTION_MODEL}" (reçu : "${val.OPENAI_TRANSCRIPTION_MODEL}"). ` +
+          `Le pipeline appel -> exercice requiert la diarisation ; les modèles non diarisants ` +
+          `(gpt-4o-transcribe, gpt-4o-mini-transcribe, whisper-1) ne renvoient pas de locuteurs ` +
+          `et rejettent chunking_strategy (HTTP 400). Aucune bascule silencieuse n'est effectuée.`,
       });
     }
     if (val.STORAGE_DRIVER === "s3") {
