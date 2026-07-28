@@ -37,9 +37,19 @@ function touchHeartbeat(): void {
 }
 
 async function main(): Promise<void> {
-  // Échoue tôt si la configuration est invalide.
-  getServerEnv();
-  log.info("worker.start", { workerId: WORKER_ID });
+  // Échoue tôt si la configuration est invalide (dont le modèle de transcription
+  // diarisant exigé par le pipeline appel -> exercice).
+  const env = getServerEnv();
+  // Modèles effectifs tracés au démarrage : un 400 « model not supported » se
+  // diagnostique alors sans accès à la configuration de l'hébergeur.
+  log.info("worker.start", {
+    workerId: WORKER_ID,
+    aiProvider: env.AI_PROVIDER,
+    transcriptionModel: env.OPENAI_TRANSCRIPTION_MODEL,
+    analysisModel: env.OPENAI_ANALYSIS_MODEL,
+    scenarioModel: env.OPENAI_SCENARIO_MODEL,
+    evaluationModel: env.OPENAI_EVALUATION_MODEL,
+  });
   touchHeartbeat();
 
   let lastHeartbeat = 0;

@@ -23,7 +23,7 @@ Généré à partir des usages réels du code (`src/lib/env.ts`, `src/lib/config
 | `AI_PROVIDER` | Non (défaut `demo`) | tous | Non | `demo` \| `openai` | Sélectionne le fournisseur d'IA. `openai` exige `OPENAI_API_KEY`. |
 | `OPENAI_API_KEY` | **Conditionnel** (si `AI_PROVIDER=openai`) | prod réelle | **Oui** | `sk-...` | Clé OpenAI, lue **uniquement** côté serveur. |
 | `OPENAI_REALTIME_MODEL` | Non (défaut `gpt-realtime`) | tous | Non | `gpt-realtime` | Modèle Realtime GA (speech-to-speech WebRTC), compatible `/v1/realtime/client_secrets`. |
-| `OPENAI_TRANSCRIPTION_MODEL` | Non (défaut `gpt-4o-transcribe-diarize`) | tous | Non | `gpt-4o-transcribe-diarize` | Modèle de transcription **diarisée** du pipeline appel → exercice (`/v1/audio/transcriptions`, `diarized_json`). |
+| `OPENAI_TRANSCRIPTION_MODEL` | Non (défaut `gpt-4o-transcribe-diarize`) | tous | Non | `gpt-4o-transcribe-diarize` | Modèle de transcription **diarisée** du pipeline appel → exercice (`/v1/audio/transcriptions`, `diarized_json`, `chunking_strategy=auto`). **Valeur imposée si `AI_PROVIDER=openai`** : toute autre valeur fait échouer le démarrage. Les modèles non diarisants (`gpt-4o-transcribe`, `gpt-4o-mini-transcribe`, `whisper-1`) ne renvoient pas de locuteurs et rejettent `chunking_strategy` (HTTP 400). |
 | `OPENAI_EVALUATION_MODEL` | Non (défaut `gpt-4o-mini`) | tous | Non | `gpt-4o-mini` | Modèle d'évaluation des simulations. |
 | `OPENAI_ANALYSIS_MODEL` | Non (défaut `gpt-5.6-terra`) | tous | Non | `gpt-5.6-terra` | Analyse structurée de l'appel modèle (Responses API, JSON schema strict + Zod). |
 | `OPENAI_SCENARIO_MODEL` | Non (défaut `gpt-5.6-terra`) | tous | Non | `gpt-5.6-terra` | Génération du scénario + grille depuis l'analyse (Responses API, JSON strict + Zod). |

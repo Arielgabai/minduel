@@ -6,6 +6,10 @@ export default defineConfig({
     environment: "node",
     include: ["tests/**/*.test.ts"],
     globals: true,
+    // Plusieurs suites font un import() dynamique du graphe de providers : la
+    // première transformation peut dépasser 5 s sur une machine chargée.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
   },
   resolve: {
     alias: {

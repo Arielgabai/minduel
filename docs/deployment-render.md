@@ -76,7 +76,7 @@ AI_PROVIDER=demo                 # ou openai
 OPENAI_API_KEY=                  # requis seulement si AI_PROVIDER=openai
 OPENAI_REALTIME_MODEL=gpt-realtime          # session vocale (WebRTC)
 OPENAI_EVALUATION_MODEL=gpt-4o-mini         # évaluation structurée (Structured Outputs) — modèle DISTINCT du Realtime
-OPENAI_TRANSCRIPTION_MODEL=gpt-4o-transcribe-diarize   # transcription diarisée (pipeline appel -> exercice)
+OPENAI_TRANSCRIPTION_MODEL=gpt-4o-transcribe-diarize   # transcription diarisée (pipeline appel -> exercice) — valeur imposée si AI_PROVIDER=openai
 OPENAI_ANALYSIS_MODEL=gpt-5.6-terra         # analyse structurée de l'appel modèle (Responses API)
 OPENAI_SCENARIO_MODEL=gpt-5.6-terra         # génération du scénario + grille (Responses API)
 OPENAI_ANALYSIS_REASONING_EFFORT=medium     # minimal|low|medium|high

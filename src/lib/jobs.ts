@@ -15,9 +15,24 @@ import {
   markRecordingFailed as markReferenceCallFailed,
 } from "./referenceCallService";
 import { JobType, REFERENCE_CALL_JOB_TYPES } from "./jobTypes";
+import { isPermanentError, PermanentJobError } from "./jobErrors";
+import {
+  JobStatus,
+  TERMINAL_JOB_STATUSES,
+  decideJobFailure,
+} from "./jobStatus";
 
 export { JobType } from "./jobTypes";
 export type { JobTypeValue } from "./jobTypes";
+export { PermanentJobError, isPermanentError } from "./jobErrors";
+export {
+  JobStatus,
+  TERMINAL_JOB_STATUSES,
+  isTerminalJobStatus,
+  isFailedJobStatus,
+  retryDelayMs,
+  decideJobFailure,
+} from "./jobStatus";
 
 /**
  * File de tâches persistée dans PostgreSQL, consommée par un worker séparé
@@ -30,6 +45,8 @@ export type { JobTypeValue } from "./jobTypes";
  * - Verrouillage : claim atomique via SELECT ... FOR UPDATE SKIP LOCKED
  *   (deux workers ne traitent jamais la même tâche simultanément).
  * - Retries + backoff exponentiel plafonné, jusqu'à maxAttempts.
+ * - États terminaux : une tâche COMPLETED ou FAILED_PERMANENT n'est JAMAIS
+ *   relancée automatiquement (seul un retry manuel explicite la réinitialise).
  */
 
 export interface ClaimedJob {
@@ -41,33 +58,113 @@ export interface ClaimedJob {
   maxAttempts: number;
 }
 
-/** Ajoute (ou réactive) une tâche pour une cible donnée. Idempotent. */
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002"
+  );
+}
+
+/**
+ * Ajoute une tâche pour une cible donnée, ou réveille une tâche en attente.
+ * Idempotent, et surtout NON destructif : une tâche terminale (COMPLETED /
+ * FAILED_PERMANENT) ou déjà en cours n'est pas ressuscitée. C'est ce qui évite
+ * qu'un `PREPROCESS_RECORDING` rejoué ne relance un `TRANSCRIBE_RECORDING` déjà
+ * en échec définitif.
+ */
 export async function enqueueJob(input: {
   organizationId: string;
   type: string;
   targetId: string;
   maxAttempts?: number;
 }): Promise<void> {
-  await prisma.processingJob.upsert({
-    where: { type_targetId: { type: input.type, targetId: input.targetId } },
-    create: {
-      organizationId: input.organizationId,
+  // Création d'abord : le cas nominal (nouvelle étape du pipeline) tient en une
+  // requête, et l'unicité (type, targetId) arbitre les créations concurrentes.
+  try {
+    await prisma.processingJob.create({
+      data: {
+        organizationId: input.organizationId,
+        type: input.type,
+        targetId: input.targetId,
+        maxAttempts: input.maxAttempts ?? 5,
+        status: JobStatus.PENDING,
+      },
+    });
+    log.info("job.enqueued", {
       type: input.type,
       targetId: input.targetId,
-      maxAttempts: input.maxAttempts ?? 5,
-      status: "PENDING",
+      organizationId: input.organizationId,
+      created: true,
+    });
+    return;
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err;
+  }
+
+  // La tâche existe : on ne réveille que celles réellement en attente. Les
+  // tâches terminales et celles en cours d'exécution sont laissées telles quelles.
+  const woken = await prisma.processingJob.updateMany({
+    where: {
+      type: input.type,
+      targetId: input.targetId,
+      status: { notIn: [...TERMINAL_JOB_STATUSES, JobStatus.RUNNING] },
     },
-    update: {
-      status: "PENDING",
-      runAfter: new Date(),
-      lastError: null,
-    },
+    data: { status: JobStatus.PENDING, runAfter: new Date(), lastError: null },
   });
-  log.info("job.enqueued", {
+
+  if (woken.count > 0) {
+    log.info("job.enqueued", {
+      type: input.type,
+      targetId: input.targetId,
+      organizationId: input.organizationId,
+      created: false,
+    });
+    return;
+  }
+
+  const existing = await prisma.processingJob.findUnique({
+    where: { type_targetId: { type: input.type, targetId: input.targetId } },
+    select: { id: true, status: true, attempts: true },
+  });
+  log.warn("job.enqueue_ignored", {
     type: input.type,
     targetId: input.targetId,
     organizationId: input.organizationId,
+    jobId: existing?.id,
+    status: existing?.status,
+    attempts: existing?.attempts,
+    reason:
+      existing && existing.status === JobStatus.RUNNING
+        ? "already_running"
+        : "terminal_state",
   });
+}
+
+/**
+ * Retry manuel contrôlé : supprime les tâches (non actives) d'une cible pour
+ * repartir d'un état propre (attempts = 0). Réservé à une action explicite du
+ * manager — jamais déclenché par le chaînage automatique.
+ */
+export async function resetJobsForTarget(input: {
+  organizationId: string;
+  targetId: string;
+  types: readonly string[];
+}): Promise<number> {
+  const res = await prisma.processingJob.deleteMany({
+    where: {
+      organizationId: input.organizationId,
+      targetId: input.targetId,
+      type: { in: [...input.types] },
+      // Ne jamais retirer sous les pieds d'un worker une tâche en cours.
+      status: { not: JobStatus.RUNNING },
+    },
+  });
+  log.info("job.manual_reset", {
+    organizationId: input.organizationId,
+    targetId: input.targetId,
+    types: input.types.join(","),
+    removed: res.count,
+  });
+  return res.count;
 }
 
 /**
@@ -88,6 +185,7 @@ export async function claimJob(input: {
           WHERE id = (
             SELECT id FROM "ProcessingJob"
             WHERE status = 'PENDING' AND "runAfter" <= now()
+              AND attempts < "maxAttempts"
               AND type = ${input.type} AND "targetId" = ${input.targetId}
             ORDER BY "runAfter" ASC
             FOR UPDATE SKIP LOCKED
@@ -102,6 +200,7 @@ export async function claimJob(input: {
           WHERE id = (
             SELECT id FROM "ProcessingJob"
             WHERE status = 'PENDING' AND "runAfter" <= now()
+              AND attempts < "maxAttempts"
             ORDER BY "runAfter" ASC
             FOR UPDATE SKIP LOCKED
             LIMIT 1
@@ -114,16 +213,35 @@ export async function claimJob(input: {
 async function completeJob(id: string): Promise<void> {
   await prisma.processingJob.update({
     where: { id },
-    data: { status: "COMPLETED", lockedAt: null, lockedBy: null, lastError: null },
+    data: {
+      status: JobStatus.COMPLETED,
+      lockedAt: null,
+      lockedBy: null,
+      lastError: null,
+    },
   });
 }
 
-async function failJob(job: ClaimedJob, error: string): Promise<void> {
-  const permanent = job.attempts >= job.maxAttempts;
-  if (permanent) {
+async function failJob(
+  job: ClaimedJob,
+  error: string,
+  permanent: boolean,
+): Promise<void> {
+  const decision = decideJobFailure({
+    attempts: job.attempts,
+    maxAttempts: job.maxAttempts,
+    permanent,
+  });
+
+  if (decision.terminal) {
     await prisma.processingJob.update({
       where: { id: job.id },
-      data: { status: "FAILED", lockedAt: null, lockedBy: null, lastError: error.slice(0, 500) },
+      data: {
+        status: JobStatus.FAILED_PERMANENT,
+        lockedAt: null,
+        lockedBy: null,
+        lastError: error.slice(0, 500),
+      },
     });
     if (job.type === JobType.RECORDING_PIPELINE) {
       await markRecordingFailed(job.targetId, job.organizationId, error);
@@ -137,28 +255,30 @@ async function failJob(job: ClaimedJob, error: string): Promise<void> {
       type: job.type,
       targetId: job.targetId,
       attempts: job.attempts,
+      maxAttempts: job.maxAttempts,
+      reason: decision.reason,
     });
-  } else {
-    // Backoff exponentiel plafonné (5s, 10s, 20s, 40s… max 5 min).
-    const delayMs = Math.min(5_000 * 2 ** (job.attempts - 1), 300_000);
-    await prisma.processingJob.update({
-      where: { id: job.id },
-      data: {
-        status: "PENDING",
-        lockedAt: null,
-        lockedBy: null,
-        lastError: error.slice(0, 500),
-        runAfter: new Date(Date.now() + delayMs),
-      },
-    });
-    log.warn("job.retry_scheduled", {
-      jobId: job.id,
-      type: job.type,
-      targetId: job.targetId,
-      attempts: job.attempts,
-      delayMs,
-    });
+    return;
   }
+
+  await prisma.processingJob.update({
+    where: { id: job.id },
+    data: {
+      status: JobStatus.PENDING,
+      lockedAt: null,
+      lockedBy: null,
+      lastError: error.slice(0, 500),
+      runAfter: new Date(Date.now() + decision.delayMs),
+    },
+  });
+  log.warn("job.retry_scheduled", {
+    jobId: job.id,
+    type: job.type,
+    targetId: job.targetId,
+    attempts: job.attempts,
+    maxAttempts: job.maxAttempts,
+    delayMs: decision.delayMs,
+  });
 }
 
 /** Exécute une tâche déjà réclamée (dispatch par type). */
@@ -185,7 +305,8 @@ export async function runClaimedJob(job: ClaimedJob): Promise<void> {
         await generateScenarioFromCall(job.targetId, job.organizationId);
         break;
       default:
-        throw new Error(`Type de tâche inconnu : ${job.type}`);
+        // Un type inconnu ne deviendra pas connu en réessayant.
+        throw new PermanentJobError(`Type de tâche inconnu : ${job.type}`);
     }
     await completeJob(job.id);
     log.info("job.completed", {
@@ -195,7 +316,7 @@ export async function runClaimedJob(job: ClaimedJob): Promise<void> {
       durationMs: Date.now() - startedAt,
     });
   } catch (err) {
-    await failJob(job, safeErrorMessage(err));
+    await failJob(job, safeErrorMessage(err), isPermanentError(err));
   }
 }
 
@@ -224,9 +345,11 @@ export async function jobQueueStats(): Promise<{
   oldestPendingAgeSec: number | null;
 }> {
   const [pending, running, failed, oldest] = await Promise.all([
-    prisma.processingJob.count({ where: { status: "PENDING" } }),
-    prisma.processingJob.count({ where: { status: "RUNNING" } }),
-    prisma.processingJob.count({ where: { status: "FAILED" } }),
+    prisma.processingJob.count({ where: { status: JobStatus.PENDING } }),
+    prisma.processingJob.count({ where: { status: JobStatus.RUNNING } }),
+    prisma.processingJob.count({
+      where: { status: { in: [JobStatus.FAILED_PERMANENT, "FAILED"] } },
+    }),
     prisma.processingJob.findFirst({
       where: { status: "PENDING" },
       orderBy: { runAfter: "asc" },
