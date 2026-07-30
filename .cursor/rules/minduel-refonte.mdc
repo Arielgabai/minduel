@@ -1,0 +1,18 @@
+---
+description: Règles de sécurité et de périmètre pour les lots de refonte Minduel
+alwaysApply: false
+---
+
+- Travaille sur un seul lot et un seul objectif.
+- Avant d'éditer, donne un plan de 12 lignes maximum et la liste exacte des fichiers.
+- N'édite aucun fichier hors de cette liste. Si un fichier supplémentaire est nécessaire, arrête-toi et explique pourquoi.
+- Réutilise le stack, l'authentification, l'ORM, les composants et les conventions existants.
+- N'ajoute aucune dépendance sans autorisation explicite.
+- Ne renomme pas et ne reformate pas les fichiers sans rapport avec le lot.
+- Ne lance aucune simulation d'appel, aucun test micro, aucun upload, aucune analyse OpenAI et aucun appel réseau payant.
+- Les tests doivent utiliser des fixtures, mocks ou stubs locaux.
+- Ne lance aucune migration ni aucun seed contre la production.
+- Ne modifie aucune donnée de production.
+- N'affiche jamais les prompts bruts ou les secrets aux routes téléprospecteur.
+- Après l'édition, exécute seulement les vérifications locales pertinentes.
+- Termine par : fichiers modifiés, tests, risques restants et prochaine action manuelle.

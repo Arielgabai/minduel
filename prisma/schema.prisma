@@ -17,28 +17,29 @@ datasource db {
 }
 
 model Organization {
-  id        String   @id @default(uuid())
-  name      String
-  slug      String   @unique
-  isActive  Boolean  @default(true)
-  isDemo    Boolean  @default(false)
+  id                   String  @id @default(uuid())
+  name                 String
+  slug                 String  @unique
+  isActive             Boolean @default(true)
+  isDemo               Boolean @default(false)
   // Réglages de confidentialité / conservation
   retentionDays        Int     @default(90)
   allowManagerPlayback Boolean @default(true)
-  createdAt String
-  updatedAt String
+  createdAt            String
+  updatedAt            String
 
-  memberships      TeamMembership[]
-  users            User[]
-  programs         TrainingProgram[]
-  scenarios        Scenario[]
-  recordings       CallRecording[]
-  knowledgeItems   KnowledgeItem[]
-  rubrics          EvaluationRubric[]
-  simulations      Simulation[]
-  auditEvents      AuditEvent[]
-  assignments      ScenarioAssignment[]
-  callAnalyses     CallAnalysis[]
+  memberships    TeamMembership[]
+  users          User[]
+  programs       TrainingProgram[]
+  scenarios      Scenario[]
+  recordings     CallRecording[]
+  knowledgeItems KnowledgeItem[]
+  rubrics        EvaluationRubric[]
+  simulations    Simulation[]
+  auditEvents    AuditEvent[]
+  assignments    ScenarioAssignment[]
+  callAnalyses   CallAnalysis[]
+  promptBundles  PromptBundle[]
 
   @@index([slug])
 }
@@ -59,15 +60,15 @@ model User {
   createdAt      String
   updatedAt      String
 
-  organization       Organization?        @relation(fields: [organizationId], references: [id])
-  membership         TeamMembership?
-  createdScenarios   Scenario[]           @relation("ScenarioAuthor")
+  organization         Organization?        @relation(fields: [organizationId], references: [id])
+  membership           TeamMembership?
+  createdScenarios     Scenario[]           @relation("ScenarioAuthor")
   assignmentsAsTelepro ScenarioAssignment[] @relation("AssignmentTelepro")
   assignmentsAsManager ScenarioAssignment[] @relation("AssignmentManager")
-  uploadedRecordings CallRecording[]
-  simulations        Simulation[]
-  auditEvents        AuditEvent[]
-  sessions           Session[]
+  uploadedRecordings   CallRecording[]
+  simulations          Simulation[]
+  auditEvents          AuditEvent[]
+  sessions             Session[]
 
   @@index([organizationId])
   @@index([email])
@@ -101,7 +102,7 @@ model TeamMembership {
 }
 
 model TrainingProgram {
-  id             String @id @default(uuid())
+  id             String  @id @default(uuid())
   organizationId String
   name           String
   description    String?
@@ -115,62 +116,95 @@ model TrainingProgram {
 }
 
 model Scenario {
-  id             String  @id @default(uuid())
-  organizationId String
-  programId      String?
-  authorId       String?
-  name           String
-  campaign       String?
-  callType       String  @default("VENTE") // VENTE | PITCH_INVESTISSEUR | ENTRETIEN_EMBAUCHE
-  offer          String?
-  prospectProfile String?
-  initialSituation String?
-  objective      String?
-  level          String  @default("MOYEN") // FACILE | MOYEN | DIFFICILE
-  personality    String?
+  id                      String  @id @default(uuid())
+  organizationId          String
+  programId               String?
+  authorId                String?
+  name                    String
+  slug                    String?
+  missionLevel            Int     @default(1)
+  sortOrder               Int     @default(0)
+  publishedPromptBundleId String? @unique
+  campaign                String?
+  callType                String  @default("VENTE") // VENTE | PITCH_INVESTISSEUR | ENTRETIEN_EMBAUCHE
+  offer                   String?
+  prospectProfile         String?
+  initialSituation        String?
+  objective               String?
+  level                   String  @default("MOYEN") // FACILE | MOYEN | DIFFICILE
+  personality             String?
   // JSON stringifiés
-  allowedObjections String?  // string[]
-  secretInfos       String?  // {question, answer}[]
-  successConditions String?
-  failureConditions String?
-  targetDurationSec Int      @default(300)
-  status         String  @default("DRAFT") // DRAFT | REVIEW_REQUIRED | PUBLISHED | ARCHIVED
+  allowedObjections       String? // string[]
+  secretInfos             String? // {question, answer}[]
+  successConditions       String?
+  failureConditions       String?
+  targetDurationSec       Int     @default(300)
+  status                  String  @default("DRAFT") // DRAFT | REVIEW_REQUIRED | PUBLISHED | ARCHIVED
   // Références aux connaissances approuvées injectées
-  knowledgeRefs  String?  // string[] d'ids KnowledgeItem
+  knowledgeRefs           String? // string[] d'ids KnowledgeItem
   // Provenance (exercice généré depuis un appel modèle)
-  sourceRecordingId String? @unique // 1 exercice par appel (idempotence à la génération)
-  sourceAnalysisId  String?
-  generatedByModel  String?
-  promptVersion     String?
+  sourceRecordingId       String? @unique // 1 exercice par appel (idempotence à la génération)
+  sourceAnalysisId        String?
+  generatedByModel        String?
+  promptVersion           String?
   // Champs générés (JSON) pour un scénario riche et contextuel
-  traineeBrief        String? // brief remis au commercial (contexte, objectif)
-  aiProspect          String? // JSON: persona IA (comportement, ton, révélations interdites)
-  relationshipHistory String? // JSON: historique fictif de la relation
-  expectedNextSteps   String? // JSON: string[] des étapes attendues
-  targetSkills        String? // JSON: string[] compétences ciblées
-  coachingReference   String? // JSON: repères de coaching (bonnes pratiques retenues)
-  createdAt      String
-  updatedAt      String
+  traineeBrief            String? // brief remis au commercial (contexte, objectif)
+  aiProspect              String? // JSON: persona IA (comportement, ton, révélations interdites)
+  relationshipHistory     String? // JSON: historique fictif de la relation
+  expectedNextSteps       String? // JSON: string[] des étapes attendues
+  targetSkills            String? // JSON: string[] compétences ciblées
+  coachingReference       String? // JSON: repères de coaching (bonnes pratiques retenues)
+  createdAt               String
+  updatedAt               String
 
-  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  program      TrainingProgram?     @relation(fields: [programId], references: [id])
-  author       User?                @relation("ScenarioAuthor", fields: [authorId], references: [id])
-  sourceRecording CallRecording?    @relation("ScenarioSourceRecording", fields: [sourceRecordingId], references: [id])
-  rubric       EvaluationRubric?
-  assignments  ScenarioAssignment[]
-  simulations  Simulation[]
+  organization          Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  program               TrainingProgram?     @relation(fields: [programId], references: [id])
+  author                User?                @relation("ScenarioAuthor", fields: [authorId], references: [id])
+  sourceRecording       CallRecording?       @relation("ScenarioSourceRecording", fields: [sourceRecordingId], references: [id])
+  publishedPromptBundle PromptBundle?        @relation("PublishedPromptBundle", fields: [publishedPromptBundleId], references: [id], onDelete: SetNull)
+  promptBundles         PromptBundle[]       @relation("ScenarioPromptBundles")
+  rubric                EvaluationRubric?
+  assignments           ScenarioAssignment[]
+  simulations           Simulation[]
 
+  @@unique([organizationId, slug])
   @@index([organizationId])
   @@index([status])
+  @@index([organizationId, missionLevel, sortOrder])
+}
+
+// Bundle de prompts versionné par exercice (scénario).
+// artifacts : JSON Record<PromptKind, { body, contentType }>.
+model PromptBundle {
+  id             String  @id @default(uuid())
+  organizationId String
+  scenarioId     String
+  version        Int
+  status         String  @default("DRAFT") // DRAFT | PUBLISHED | SUPERSEDED
+  label          String?
+  createdById    String?
+  createdAt      String
+  publishedAt    String?
+  artifacts      String
+  contentHash    String
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scenario     Scenario     @relation("ScenarioPromptBundles", fields: [scenarioId], references: [id], onDelete: Cascade)
+  publishedFor Scenario?    @relation("PublishedPromptBundle")
+  simulations  Simulation[]
+
+  @@unique([scenarioId, version])
+  @@index([organizationId])
+  @@index([scenarioId, status])
 }
 
 model ScenarioAssignment {
-  id             String @id @default(uuid())
+  id             String  @id @default(uuid())
   organizationId String
   scenarioId     String
   teleproId      String
   managerId      String?
-  status         String @default("ASSIGNED") // ASSIGNED | IN_PROGRESS | COMPLETED
+  status         String  @default("ASSIGNED") // ASSIGNED | IN_PROGRESS | COMPLETED
   createdAt      String
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -184,89 +218,89 @@ model ScenarioAssignment {
 }
 
 model CallRecording {
-  id             String  @id @default(uuid())
-  organizationId String
-  uploaderId     String?
-  title          String
-  campaign       String?
-  callOutcome    String? // VENTE | REFUS | RAPPEL | RDV | AUTRE
-  language       String  @default("fr")
-  tags           String? // JSON string[]
-  managerNote    String?
-  consent        Boolean @default(false)
-  consentAt      String? // horodatage ISO du consentement (traçabilité RGPD)
-  useAsModel     Boolean @default(true) // utiliser cet appel comme appel modèle (génération d'exercice)
-  storageKey     String? // clé de stockage privé (jamais public)
-  mimeType       String?
-  sizeBytes      Int     @default(0)
-  durationSec    Int     @default(0)
+  id                        String   @id @default(uuid())
+  organizationId            String
+  uploaderId                String?
+  title                     String
+  campaign                  String?
+  callOutcome               String? // VENTE | REFUS | RAPPEL | RDV | AUTRE
+  language                  String   @default("fr")
+  tags                      String? // JSON string[]
+  managerNote               String?
+  consent                   Boolean  @default(false)
+  consentAt                 String? // horodatage ISO du consentement (traçabilité RGPD)
+  useAsModel                Boolean  @default(true) // utiliser cet appel comme appel modèle (génération d'exercice)
+  storageKey                String? // clé de stockage privé (jamais public)
+  mimeType                  String?
+  sizeBytes                 Int      @default(0)
+  durationSec               Int      @default(0)
   // Métadonnées audio (ffprobe, best-effort ; null si ffprobe indisponible)
-  audioChannels  Int?
-  audioSampleRate Int?
-  audioCodec     String?
-  audioBitrate   Int?
+  audioChannels             Int?
+  audioSampleRate           Int?
+  audioCodec                String?
+  audioBitrate              Int?
   // Statut métier du pipeline (voir RecordingStatus dans src/lib/enums.ts) :
   // UPLOADED | PREPROCESSING | TRANSCRIBING | ANALYZING | WAITING_FOR_CLARIFICATION
   // | GENERATING_EXERCISE | REVIEW_REQUIRED | READY | FAILED
-  status         String  @default("UPLOADED")
-  errorMessage   String?
+  status                    String   @default("UPLOADED")
+  errorMessage              String?
   // Résultats détectés (surfacés dans la liste manager, remplis par le pipeline)
   detectedCallType          String?
   callTypeConfidence        Float?
   referenceSuitabilityScore Int?
   usableAsReference         Boolean?
   // Clarifications minimales demandées au manager (JSON), voir clarify route
-  clarificationQuestions String? // JSON: [{id, question, importance, options?}]
-  clarificationAnswers   String? // JSON: {[questionId]: answer}
-  enabled        Boolean @default(true)
-  processingHash String? // idempotence
-  createdAt      String
-  updatedAt      String
+  clarificationQuestions    String? // JSON: [{id, question, importance, options?}]
+  clarificationAnswers      String? // JSON: {[questionId]: answer}
+  enabled                   Boolean  @default(true)
+  processingHash            String? // idempotence
+  createdAt                 String
+  updatedAt                 String
 
-  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  uploader        User?           @relation(fields: [uploaderId], references: [id])
-  transcript      Transcript?
-  analysis        CallAnalysis?
-  generatedScenario Scenario?     @relation("ScenarioSourceRecording")
-  knowledgeItems  KnowledgeItem[]
+  organization      Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  uploader          User?           @relation(fields: [uploaderId], references: [id])
+  transcript        Transcript?
+  analysis          CallAnalysis?
+  generatedScenario Scenario?       @relation("ScenarioSourceRecording")
+  knowledgeItems    KnowledgeItem[]
 
   @@index([organizationId])
   @@index([status])
 }
 
 model Transcript {
-  id          String @id @default(uuid())
-  recordingId String @unique
-  language    String @default("fr")
+  id                          String  @id @default(uuid())
+  recordingId                 String  @unique
+  language                    String  @default("fr")
   // Copie JSON héritée (compat) : [{speaker:"AGENT"|"PROSPECT", text, startMs, endMs}].
   // La source de vérité diarisée est désormais la table relationnelle TranscriptSegment.
-  segments    String
+  segments                    String
   // Attribution des locuteurs (identifie commercial vs client à partir de la diarisation)
-  commercialSpeakerId        String?
-  customerSpeakerId          String?
+  commercialSpeakerId         String?
+  customerSpeakerId           String?
   speakerAssignmentConfidence Float?
-  speakerAssignmentRationale String?
-  provider    String? // ex : "openai" | "demo"
-  model       String? // ex : gpt-4o-transcribe-diarize
-  createdAt   String
+  speakerAssignmentRationale  String?
+  provider                    String? // ex : "openai" | "demo"
+  model                       String? // ex : gpt-4o-transcribe-diarize
+  createdAt                   String
 
-  recording CallRecording      @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  recording CallRecording       @relation(fields: [recordingId], references: [id], onDelete: Cascade)
   turns     TranscriptSegment[]
 }
 
 // Segments diarisés (relationnels car liés à des timestamps et référencés comme preuves
 // par l'analyse via evidenceSegmentIds). speakerId provient du fournisseur de diarisation.
 model TranscriptSegment {
-  id            String  @id @default(uuid())
-  transcriptId  String
-  idx           Int     @default(0) // ordre stable
-  speakerId     String // identifiant locuteur brut (ex : "speaker_0")
-  role          String? // AGENT | PROSPECT (rempli après attribution), null si inconnu
-  startMs       Int     @default(0)
-  endMs         Int     @default(0)
-  text          String
+  id             String  @id @default(uuid())
+  transcriptId   String
+  idx            Int     @default(0) // ordre stable
+  speakerId      String // identifiant locuteur brut (ex : "speaker_0")
+  role           String? // AGENT | PROSPECT (rempli après attribution), null si inconnu
+  startMs        Int     @default(0)
+  endMs          Int     @default(0)
+  text           String
   anonymizedText String? // texte anonymisé (PII remplacées par des variables)
-  confidence    Float?
+  confidence     Float?
 
   transcript Transcript @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
 
@@ -278,7 +312,7 @@ model KnowledgeItem {
   id             String  @id @default(uuid())
   organizationId String
   recordingId    String?
-  type           String  // OBJECTION | GOOD_PRACTICE | BAD_PRACTICE | DISCOVERY_QUESTION | VOCABULARY | SCRIPT_STEP | COMPLIANCE_RULE
+  type           String // OBJECTION | GOOD_PRACTICE | BAD_PRACTICE | DISCOVERY_QUESTION | VOCABULARY | SCRIPT_STEP | COMPLIANCE_RULE
   title          String
   content        String
   sourceExcerpt  String?
@@ -298,7 +332,7 @@ model KnowledgeItem {
 }
 
 model EvaluationRubric {
-  id             String @id @default(uuid())
+  id             String  @id @default(uuid())
   organizationId String
   scenarioId     String? @unique
   name           String  @default("Grille par défaut")
@@ -317,9 +351,9 @@ model EvaluationRubric {
 // Analyse structurée d'un appel modèle (1:1 avec CallRecording).
 // Colonnes indexables pour la liste/filtrage ; JSON pour les structures variables.
 model CallAnalysis {
-  id             String @id @default(uuid())
-  organizationId String
-  recordingId    String @unique
+  id                        String  @id @default(uuid())
+  organizationId            String
+  recordingId               String  @unique
   // Colonnes indexables
   callType                  String? // voir CallType (COLD_PROSPECTING, EXISTING_CUSTOMER, ...)
   callTypeConfidence        Float?
@@ -330,13 +364,13 @@ model CallAnalysis {
   model                     String?
   promptVersion             String?
   // Structures variables (JSON)
-  summary               String? // synthèse courte, anonymisée
-  customerProfile       String? // JSON
-  commercialStrategy    String? // JSON (bonnes pratiques retenues avec evidenceSegmentIds)
-  ambiguities           String? // JSON: [{id, question, importance}]
-  referenceSuitability  String? // JSON (justification du score)
-  createdAt      String
-  updatedAt      String
+  summary                   String? // synthèse courte, anonymisée
+  customerProfile           String? // JSON
+  commercialStrategy        String? // JSON (bonnes pratiques retenues avec evidenceSegmentIds)
+  ambiguities               String? // JSON: [{id, question, importance}]
+  referenceSuitability      String? // JSON (justification du score)
+  createdAt                 String
+  updatedAt                 String
 
   organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   recording    CallRecording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
@@ -346,29 +380,34 @@ model CallAnalysis {
 }
 
 model Simulation {
-  id             String  @id @default(uuid())
-  organizationId String
-  scenarioId     String
-  teleproId      String
-  mode           String  @default("DEMO") // DEMO | REALTIME
-  status         String  @default("CREATED") // CREATED | IN_PROGRESS | COMPLETED | ABANDONED | FAILED
-  prospectName   String?
-  startedAt      String?
-  endedAt        String?
-  durationSec    Int     @default(0)
-  outcome        String? // VENTE | REFUS | RAPPEL | RDV
-  createdAt      String
-  updatedAt      String
+  id                  String  @id @default(uuid())
+  organizationId      String
+  scenarioId          String
+  teleproId           String
+  mode                String  @default("DEMO") // DEMO | REALTIME
+  status              String  @default("CREATED") // CREATED | IN_PROGRESS | COMPLETED | ABANDONED | FAILED
+  prospectName        String?
+  startedAt           String?
+  endedAt             String?
+  durationSec         Int     @default(0)
+  outcome             String? // VENTE | REFUS | RAPPEL | RDV
+  promptBundleId      String?
+  promptBundleVersion Int?
+  promptContentHash   String?
+  createdAt           String
+  updatedAt           String
 
-  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  scenario     Scenario             @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
-  telepro      User                 @relation(fields: [teleproId], references: [id], onDelete: Cascade)
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scenario     Scenario              @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  telepro      User                  @relation(fields: [teleproId], references: [id], onDelete: Cascade)
+  promptBundle PromptBundle?         @relation(fields: [promptBundleId], references: [id], onDelete: Restrict)
   turns        SimulationTurn[]
   evaluation   SimulationEvaluation?
 
   @@index([organizationId])
   @@index([teleproId])
   @@index([scenarioId])
+  @@index([promptBundleId])
 }
 
 model SimulationTurn {
@@ -385,9 +424,9 @@ model SimulationTurn {
 }
 
 model SimulationEvaluation {
-  id            String @id @default(uuid())
-  simulationId  String @unique
-  overallScore  Int    @default(0)
+  id            String  @id @default(uuid())
+  simulationId  String  @unique
+  overallScore  Int     @default(0)
   summary       String?
   // JSON strengths/improvements/advice/betterFormulation/keyMoments/outcome
   strengths     String?
@@ -403,14 +442,14 @@ model SimulationEvaluation {
 }
 
 model SkillScore {
-  id           String @id @default(uuid())
-  evaluationId String
-  key          String
-  label        String
-  score        Int    @default(0)
-  maxScore     Int    @default(0)
-  rationale    String?
-  evidence     String?
+  id             String  @id @default(uuid())
+  evaluationId   String
+  key            String
+  label          String
+  score          Int     @default(0)
+  maxScore       Int     @default(0)
+  rationale      String?
+  evidence       String?
   recommendation String?
 
   evaluation SimulationEvaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
@@ -419,7 +458,7 @@ model SkillScore {
 }
 
 model AuditEvent {
-  id             String @id @default(uuid())
+  id             String  @id @default(uuid())
   organizationId String
   actorId        String?
   action         String // UPLOAD | KNOWLEDGE_APPROVE | KNOWLEDGE_REJECT | EXPORT | DELETE_RECORDING | ...
@@ -440,19 +479,19 @@ model AuditEvent {
 // (SELECT ... FOR UPDATE SKIP LOCKED), retries et backoff.
 // L'unicité (type, targetId) garantit l'idempotence : une seule tâche active par cible.
 model ProcessingJob {
-  id             String  @id @default(uuid())
+  id             String    @id @default(uuid())
   organizationId String
   type           String // RECORDING_PIPELINE | ...
   targetId       String // ex : id de CallRecording
-  status         String  @default("PENDING") // PENDING | RUNNING | COMPLETED | FAILED
-  attempts       Int     @default(0)
-  maxAttempts    Int     @default(5)
-  runAfter       DateTime @default(now()) // backoff : ne pas exécuter avant cette date
+  status         String    @default("PENDING") // PENDING | RUNNING | COMPLETED | FAILED
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(5)
+  runAfter       DateTime  @default(now()) // backoff : ne pas exécuter avant cette date
   lockedAt       DateTime?
   lockedBy       String?
   lastError      String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@unique([type, targetId])
   @@index([status, runAfter])

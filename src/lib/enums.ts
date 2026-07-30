@@ -176,3 +176,23 @@ export const OUTCOME_LABELS: Record<string, string> = {
   RDV: "Rendez-vous obtenu",
   AUTRE: "Autre",
 };
+
+/** Types de prompts versionnés dans un PromptBundle (exercice). */
+export const PromptKind = {
+  PROSPECT_PERSONA: "PROSPECT_PERSONA",
+  EVALUATION_SYSTEM: "EVALUATION_SYSTEM",
+  EVALUATION_USER: "EVALUATION_USER",
+  SPEAKER_ATTRIBUTION: "SPEAKER_ATTRIBUTION",
+  ANONYMIZATION: "ANONYMIZATION",
+  CALL_ANALYSIS: "CALL_ANALYSIS",
+  SCENARIO_GENERATION: "SCENARIO_GENERATION",
+} as const;
+export type PromptKind = (typeof PromptKind)[keyof typeof PromptKind];
+
+export const PromptBundleStatus = {
+  DRAFT: "DRAFT",
+  PUBLISHED: "PUBLISHED",
+  SUPERSEDED: "SUPERSEDED",
+} as const;
+export type PromptBundleStatus =
+  (typeof PromptBundleStatus)[keyof typeof PromptBundleStatus];
