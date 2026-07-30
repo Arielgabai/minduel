@@ -28,8 +28,27 @@ type ScenarioRow = {
   targetDurationSec: number;
   knowledgeRefs: string | null;
   status: string;
+  publishedPromptBundleId: string | null;
+  relationshipHistory: string | null;
+  aiProspect: string | null;
+  expectedNextSteps: string | null;
+  traineeBrief: string | null;
   updatedAt: string;
   createdAt: string;
+};
+
+type BundleRow = {
+  id: string;
+  organizationId: string;
+  scenarioId: string;
+  version: number;
+  status: string;
+  label: string | null;
+  createdById: string | null;
+  createdAt: string;
+  publishedAt: string | null;
+  artifacts: string;
+  contentHash: string;
 };
 
 type AssignmentRow = {
@@ -57,7 +76,7 @@ let scenarios: ScenarioRow[] = [];
 let assignments: AssignmentRow[] = [];
 let audits: AuditRow[] = [];
 let simulations: Array<{ id: string; scenarioId: string }> = [];
-let bundles: Array<{ id: string; scenarioId: string }> = [];
+let bundles: BundleRow[] = [];
 let rubrics: Array<{ id: string; scenarioId: string }> = [];
 let seq = 0;
 /** Simule une course : updateMany perd le CAS (count 0) après archivage concurrent. */
@@ -111,6 +130,15 @@ function matchScenarioWhere(where: Record<string, unknown> | undefined) {
       if (where.organizationId && s.organizationId !== where.organizationId)
         return false;
       if (!matchesNotStatus(s.status, where.status)) return false;
+      if (
+        Object.prototype.hasOwnProperty.call(where, "publishedPromptBundleId")
+      ) {
+        if (where.publishedPromptBundleId === null) {
+          if (s.publishedPromptBundleId !== null) return false;
+        } else if (s.publishedPromptBundleId !== where.publishedPromptBundleId) {
+          return false;
+        }
+      }
       return true;
     }) ?? null
   );
@@ -139,6 +167,11 @@ function seedScenario(
     targetDurationSec: 300,
     knowledgeRefs: "[]",
     status,
+    publishedPromptBundleId: null,
+    relationshipHistory: null,
+    aiProspect: null,
+    expectedNextSteps: null,
+    traineeBrief: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
@@ -192,6 +225,18 @@ vi.mock("@/lib/db", () => {
         )
           return false;
         if (!matchesNotStatus(s.status, where?.status)) return false;
+        if (
+          where &&
+          Object.prototype.hasOwnProperty.call(where, "publishedPromptBundleId")
+        ) {
+          if (where.publishedPromptBundleId === null) {
+            if (s.publishedPromptBundleId !== null) return false;
+          } else if (
+            s.publishedPromptBundleId !== where.publishedPromptBundleId
+          ) {
+            return false;
+          }
+        }
         return true;
       });
       for (const t of targets) {
@@ -265,10 +310,102 @@ vi.mock("@/lib/db", () => {
     }),
   };
 
+  const promptBundleApi = {
+    findFirst: async ({
+      where,
+    }: {
+      where?: Record<string, unknown>;
+    }) => {
+      const found = bundles.find((b) => {
+        if (where?.id && b.id !== where.id) return false;
+        if (where?.scenarioId && b.scenarioId !== where.scenarioId) return false;
+        if (
+          where?.organizationId &&
+          b.organizationId !== where.organizationId
+        )
+          return false;
+        if (where?.status && b.status !== where.status) return false;
+        return true;
+      });
+      return found ? { ...found } : null;
+    },
+    findMany: async ({
+      where,
+      orderBy,
+    }: {
+      where?: Record<string, unknown>;
+      orderBy?: { version: "desc" | "asc" };
+    }) => {
+      let rows = bundles.filter((b) => {
+        if (where?.scenarioId && b.scenarioId !== where.scenarioId) return false;
+        if (
+          where?.organizationId &&
+          b.organizationId !== where.organizationId
+        )
+          return false;
+        if (where?.status && b.status !== where.status) return false;
+        return true;
+      });
+      if (orderBy?.version === "desc") {
+        rows = [...rows].sort((a, b) => b.version - a.version);
+      } else if (orderBy?.version === "asc") {
+        rows = [...rows].sort((a, b) => a.version - b.version);
+      }
+      return rows.map((b) => ({ ...b }));
+    },
+    create: async ({ data }: { data: Record<string, unknown> }) => {
+      const { Prisma } = await import("@prisma/client");
+      if (
+        data.status === "PUBLISHED" &&
+        bundles.some(
+          (b) =>
+            b.scenarioId === data.scenarioId && b.status === "PUBLISHED",
+        )
+      ) {
+        throw new Prisma.PrismaClientKnownRequestError(
+          "Unique published bundle",
+          { code: "P2002", clientVersion: "test" },
+        );
+      }
+      if (
+        bundles.some(
+          (b) =>
+            b.scenarioId === data.scenarioId && b.version === data.version,
+        )
+      ) {
+        throw new Prisma.PrismaClientKnownRequestError("Unique version", {
+          code: "P2002",
+          clientVersion: "test",
+        });
+      }
+      const row: BundleRow = {
+        id: uid("pb"),
+        organizationId: String(data.organizationId),
+        scenarioId: String(data.scenarioId),
+        version: Number(data.version),
+        status: String(data.status),
+        label: (data.label as string | null) ?? null,
+        createdById: (data.createdById as string | null) ?? null,
+        createdAt: String(data.createdAt),
+        publishedAt: (data.publishedAt as string | null) ?? null,
+        artifacts: String(data.artifacts),
+        contentHash: String(data.contentHash),
+      };
+      bundles.push(row);
+      return { ...row };
+    },
+  };
+
+  const knowledgeItemApi = {
+    findMany: async () => [],
+  };
+
   const tx = {
     scenario: scenarioApi,
     auditEvent: auditEventApi,
     scenarioAssignment: assignmentApi,
+    promptBundle: promptBundleApi,
+    knowledgeItem: knowledgeItemApi,
   };
 
   return {
@@ -276,6 +413,7 @@ vi.mock("@/lib/db", () => {
       scenario: scenarioApi,
       auditEvent: auditEventApi,
       scenarioAssignment: assignmentApi,
+      promptBundle: promptBundleApi,
       user: userApi,
       simulation: {
         groupBy: async () => [],
@@ -283,21 +421,29 @@ vi.mock("@/lib/db", () => {
       simulationEvaluation: {
         findMany: async () => [],
       },
-      knowledgeItem: {
-        findMany: async () => [],
-      },
+      knowledgeItem: knowledgeItemApi,
       $transaction: async <T>(
         fn: (client: typeof tx) => Promise<T>,
       ): Promise<T> => {
         const snapScenarios = scenarios.map((s) => ({ ...s }));
         const snapAudits = audits.map((a) => ({ ...a }));
         const snapAssignments = assignments.map((a) => ({ ...a }));
+        const snapBundles = bundles.map((b) => ({ ...b }));
         try {
           return await fn(tx);
         } catch (err) {
+          const racedArchive = simulateLostArchiveRace;
           scenarios = snapScenarios;
           audits = snapAudits;
           assignments = snapAssignments;
+          bundles = snapBundles;
+          // La course concurrente a archive hors de cette transaction :
+          // le rollback ne doit pas annuler cette issue.
+          if (racedArchive) {
+            for (const s of scenarios) {
+              s.status = "ARCHIVED";
+            }
+          }
           throw err;
         }
       },
@@ -368,7 +514,7 @@ describe("DELETE manager — soft-archive", () => {
         createdAt: "2026-01-01T00:00:00.000Z",
       },
     ];
-    bundles = [{ id: "b1", scenarioId: SCENARIO_ID }];
+    bundles = [{ id: "b1", scenarioId: SCENARIO_ID } as BundleRow];
     rubrics = [{ id: "r1", scenarioId: SCENARIO_ID }];
     const prevSims = simulations.length;
     const prevAsg = assignments.length;

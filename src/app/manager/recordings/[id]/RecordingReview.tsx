@@ -83,6 +83,7 @@ export function RecordingReview({ data }: { data: ReviewData }) {
   const router = useRouter();
   const { scenario, analysis } = data;
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [openEvidence, setOpenEvidence] = useState<string | null>(null);
   const [preview, setPreview] = useState<{
     prospectName: string;
@@ -93,14 +94,28 @@ export function RecordingReview({ data }: { data: ReviewData }) {
   const published = scenario.status === "PUBLISHED";
 
   async function publish() {
+    if (busy) return;
     setBusy(true);
+    setError(null);
     try {
       const res = await fetch(`/api/scenarios/${scenario.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: published ? "DRAFT" : "PUBLISHED" }),
       });
-      if (res.ok) router.refresh();
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        setError(
+          json?.error?.message ??
+            "Publication impossible. Réessaie ou contacte un administrateur.",
+        );
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError(
+        "Publication impossible. Réessaie ou contacte un administrateur.",
+      );
     } finally {
       setBusy(false);
     }
@@ -147,13 +162,20 @@ export function RecordingReview({ data }: { data: ReviewData }) {
             <h2 className="text-xl font-bold text-white">{scenario.name}</h2>
             {analysis && <p className="mt-1 max-w-2xl text-sm text-white/60">{analysis.summary}</p>}
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="ghost" onClick={test} disabled={busy}>
-              🧪 Tester l&apos;exercice
-            </Button>
-            <Button onClick={publish} disabled={busy}>
-              {published ? "Dépublier" : "Valider et publier"}
-            </Button>
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex flex-wrap gap-2">
+              <Button variant="ghost" onClick={test} disabled={busy}>
+                🧪 Tester l&apos;exercice
+              </Button>
+              <Button onClick={publish} disabled={busy}>
+                {published ? "Dépublier" : "Valider et publier"}
+              </Button>
+            </div>
+            {error && (
+              <p className="max-w-sm text-sm text-red-300" role="alert">
+                {error}
+              </p>
+            )}
           </div>
         </div>
       </Card>

@@ -60,3 +60,14 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 - Pas de dépendance, migration prod, seed prod, simulation live, micro, upload, ni appel OpenAI payant sans accord.
 - Tests : fixtures/mocks locaux uniquement ; ne pas exposer prompts/secrets côté télépro.
 - Réutiliser auth, Prisma, composants et conventions existants.
+
+## Lot F2 — Publication manager + PromptBundle (30/07/2026)
+
+**Livré :**
+
+- Service `src/lib/scenarioPromptPublication.ts` : matrice A–G ; retry max 2 ``$transaction`` (P2002/P2034/race) ; convergence exacte des champs PATCH (sinon 409 concurrent).
+- `PATCH /api/scenarios/[id]` délègue entièrement au service (404/409 inclus).
+- UI manager : `ScenarioForm`, `ScenarioActions`, `RecordingReview` gèrent `!res.ok` sans faux succès.
+- Tests `tests/scenarioPromptPublication.test.ts` (P2002 réel, faux succès, P2034, v4, connaissances, assertions UI).
+
+**Hors périmètre :** migration, seed, backfill, admin (déjà conforme).

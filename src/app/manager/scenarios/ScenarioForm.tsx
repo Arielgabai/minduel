@@ -55,7 +55,29 @@ export function ScenarioForm({
   knowledgeOptions: KnowledgeOption[];
 }) {
   const router = useRouter();
-  const [form, setForm] = useState<ScenarioInitial>(initial ?? EMPTY);
+  const [persistedScenarioId, setPersistedScenarioId] = useState<string | undefined>(
+    initial?.id,
+  );
+  const [form, setForm] = useState<ScenarioInitial>(() => {
+    if (!initial) return EMPTY;
+    return {
+      name: initial.name,
+      callType: initial.callType,
+      level: initial.level,
+      campaign: initial.campaign,
+      offer: initial.offer,
+      prospectProfile: initial.prospectProfile,
+      initialSituation: initial.initialSituation,
+      objective: initial.objective,
+      personality: initial.personality,
+      allowedObjections: initial.allowedObjections,
+      secretInfos: initial.secretInfos,
+      successConditions: initial.successConditions,
+      failureConditions: initial.failureConditions,
+      targetDurationSec: initial.targetDurationSec,
+      knowledgeRefs: initial.knowledgeRefs,
+    };
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -111,24 +133,45 @@ export function ScenarioForm({
     };
 
     try {
-      const id = form.id;
-      const res = await fetch(id ? `/api/scenarios/${id}` : "/api/scenarios", {
-        method: id ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const json = await res.json();
+      const res = await fetch(
+        persistedScenarioId
+          ? `/api/scenarios/${persistedScenarioId}`
+          : "/api/scenarios",
+        {
+          method: persistedScenarioId ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
+      const json = await res.json().catch(() => null);
       if (!res.ok) {
-        setError(json.error?.message ?? "Enregistrement impossible.");
+        setError(json?.error?.message ?? "Enregistrement impossible.");
         return;
       }
-      const scenarioId = id ?? json.data.id;
+      const scenarioId = persistedScenarioId ?? json?.data?.id;
+      if (!scenarioId) {
+        setError("Enregistrement impossible.");
+        return;
+      }
+      if (!persistedScenarioId) {
+        setPersistedScenarioId(scenarioId);
+      }
       if (publish) {
-        await fetch(`/api/scenarios/${scenarioId}`, {
+        const pubRes = await fetch(`/api/scenarios/${scenarioId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ status: "PUBLISHED" }),
         });
+        const pubJson = await pubRes.json().catch(() => null);
+        if (!pubRes.ok) {
+          const apiMsg =
+            pubJson?.error?.message ??
+            "Publication impossible. Réessaie ou contacte un administrateur.";
+          setError(
+            `Le brouillon a été enregistré, mais la publication a échoué : ${apiMsg}`,
+          );
+          return;
+        }
       }
       router.push(`/manager/scenarios/${scenarioId}`);
       router.refresh();

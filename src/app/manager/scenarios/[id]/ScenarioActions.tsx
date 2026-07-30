@@ -20,15 +20,28 @@ export function ScenarioActions({
   const [preview, setPreview] = useState<{ prospectName: string; opener: string; persona: string } | null>(null);
 
   async function togglePublish() {
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
-      await fetch(`/api/scenarios/${id}`, {
+      const res = await fetch(`/api/scenarios/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: status === "PUBLISHED" ? "DRAFT" : "PUBLISHED" }),
       });
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        setError(
+          json?.error?.message ??
+            "Publication impossible. Réessaie ou contacte un administrateur.",
+        );
+        return;
+      }
       router.refresh();
+    } catch {
+      setError(
+        "Publication impossible. Réessaie ou contacte un administrateur.",
+      );
     } finally {
       setBusy(false);
     }
