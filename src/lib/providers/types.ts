@@ -275,6 +275,11 @@ export interface EvaluationContextKnowledge {
   content: string;
 }
 
+export interface EvaluationPromptOverrides {
+  system?: string;
+  user?: string;
+}
+
 export interface EvaluationInput {
   turns: Array<{ role: string; content: string; atMs: number }>;
   rubric: RubricScoreInput[];
@@ -284,10 +289,13 @@ export interface EvaluationInput {
   scenarioName?: string;
   callType?: string;
   objective?: string;
+  offer?: string;
+  prospectName?: string;
   prospectProfile?: string;
   successConditions?: string;
   failureConditions?: string;
   knowledge?: EvaluationContextKnowledge[];
+  evaluationPromptOverrides?: EvaluationPromptOverrides;
 }
 
 export interface EvaluationProvider {
