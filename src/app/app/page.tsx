@@ -11,7 +11,11 @@ export default async function TeleproHome() {
 
   const [assignments, evaluations, dbUser] = await Promise.all([
     prisma.scenarioAssignment.findMany({
-      where: { teleproId: user.id, organizationId: user.organizationId },
+      where: {
+        teleproId: user.id,
+        organizationId: user.organizationId,
+        scenario: { status: "PUBLISHED" },
+      },
       include: { scenario: true },
       orderBy: { createdAt: "desc" },
     }),

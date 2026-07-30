@@ -2,7 +2,12 @@ import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { requireManager } from "@/lib/auth";
 import { Card, Badge, EmptyState, LinkButton } from "@/components/ui";
-import { LEVEL_LABELS, CALL_TYPE_LABELS } from "@/lib/enums";
+import {
+  LEVEL_LABELS,
+  CALL_TYPE_LABELS,
+  SCENARIO_STATUS_LABELS,
+  ScenarioStatus,
+} from "@/lib/enums";
 
 export default async function ScenariosPage() {
   const manager = await requireManager();
@@ -48,8 +53,20 @@ export default async function ScenariosPage() {
                     <Badge tone={s.level === "DIFFICILE" ? "flame" : s.level === "FACILE" ? "mint" : "violet"}>
                       {LEVEL_LABELS[s.level]}
                     </Badge>
-                    <Badge tone={s.status === "PUBLISHED" ? "mint" : "gray"}>
-                      {s.status === "PUBLISHED" ? "Publié" : "Brouillon"}
+                    <Badge
+                      tone={
+                        s.status === ScenarioStatus.PUBLISHED
+                          ? "mint"
+                          : s.status === ScenarioStatus.ARCHIVED
+                            ? "red"
+                            : "gray"
+                      }
+                    >
+                      {s.status === ScenarioStatus.ARCHIVED
+                        ? "Archivé"
+                        : s.status === ScenarioStatus.PUBLISHED
+                          ? "Publié"
+                          : SCENARIO_STATUS_LABELS[s.status] ?? "Brouillon"}
                     </Badge>
                   </div>
                   <p className="mt-3 font-semibold text-white">{s.name}</p>
