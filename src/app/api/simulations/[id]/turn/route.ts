@@ -17,6 +17,7 @@ export async function POST(
     const result = await processTurn({
       simulationId: id,
       organizationId: user.organizationId,
+      teleproId: user.id,
       agentMessage: message,
     });
 

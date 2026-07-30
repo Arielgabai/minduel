@@ -4,8 +4,17 @@ import { handle, ok, fail } from "@/lib/api";
 import { requireTelepro } from "@/lib/auth";
 import { nowIso } from "@/lib/utils";
 import { isDemoMode } from "@/lib/config";
-import { SimulationMode, SimulationStatus } from "@/lib/enums";
+import {
+  PromptBundleStatus,
+  ScenarioStatus,
+  SimulationMode,
+  SimulationStatus,
+} from "@/lib/enums";
 import { opener, prospectNameFor } from "@/lib/simulationService";
+import {
+  parsePromptArtifacts,
+  verifyPromptArtifactsHash,
+} from "@/lib/promptArtifacts";
 
 const schema = z.object({ scenarioId: z.string().uuid() });
 
@@ -14,16 +23,49 @@ export async function POST(req: Request) {
     const user = await requireTelepro();
     const { scenarioId } = schema.parse(await req.json());
 
-    // Isolation : scénario publié, de l'org, et assigné à ce télépro.
     const scenario = await prisma.scenario.findFirst({
-      where: { id: scenarioId, organizationId: user.organizationId, status: "PUBLISHED" },
+      where: { id: scenarioId, organizationId: user.organizationId },
     });
-    if (!scenario) return fail(404, "Scénario introuvable ou non publié.");
+    if (!scenario) {
+      return fail(404, "Scénario introuvable ou non publié.");
+    }
+    if (scenario.status === ScenarioStatus.ARCHIVED) {
+      return fail(403, "Ce scénario est archivé.");
+    }
+    if (scenario.status !== ScenarioStatus.PUBLISHED) {
+      return fail(404, "Scénario introuvable ou non publié.");
+    }
 
     const assignment = await prisma.scenarioAssignment.findFirst({
       where: { scenarioId, teleproId: user.id },
     });
     if (!assignment) return fail(403, "Ce scénario ne t'est pas assigné.");
+
+    if (!scenario.publishedPromptBundleId) {
+      return fail(409, "Aucun bundle de prompts publié pour ce scénario.");
+    }
+
+    const bundle = await prisma.promptBundle.findFirst({
+      where: {
+        id: scenario.publishedPromptBundleId,
+        organizationId: user.organizationId,
+        scenarioId: scenario.id,
+        status: PromptBundleStatus.PUBLISHED,
+      },
+    });
+    if (!bundle) {
+      return fail(409, "Bundle de prompts publié invalide pour ce scénario.");
+    }
+
+    let artifacts;
+    try {
+      artifacts = parsePromptArtifacts(bundle.artifacts);
+    } catch {
+      return fail(409, "Bundle de prompts incohérent.");
+    }
+    if (!verifyPromptArtifactsHash(artifacts, bundle.contentHash)) {
+      return fail(409, "Bundle de prompts incohérent.");
+    }
 
     const now = nowIso();
     const prospectName = prospectNameFor(scenarioId + user.id + now);
@@ -36,6 +78,9 @@ export async function POST(req: Request) {
         mode: isDemoMode() ? SimulationMode.DEMO : SimulationMode.REALTIME,
         status: SimulationStatus.CREATED,
         prospectName,
+        promptBundleId: bundle.id,
+        promptBundleVersion: bundle.version,
+        promptContentHash: bundle.contentHash,
         startedAt: now,
         createdAt: now,
         updatedAt: now,

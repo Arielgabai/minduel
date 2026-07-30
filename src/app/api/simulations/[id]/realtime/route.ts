@@ -1,8 +1,7 @@
 import { handle, ok, fail } from "@/lib/api";
 import { requireTelepro } from "@/lib/auth";
-import { prisma } from "@/lib/db";
 import { getRealtimeSessionProvider } from "@/lib/providers";
-import { getPersonaForScenario } from "@/lib/simulationService";
+import { getPersonaForSimulation } from "@/lib/simulationService";
 import { rateLimit } from "@/lib/ratelimit";
 import { log } from "@/lib/log";
 
@@ -25,16 +24,11 @@ export async function POST(
       return fail(429, "Trop de sessions demandées. Réessaie dans une minute.");
     }
 
-    // Isolation : la simulation doit appartenir au télépro ET à son organisation.
-    const sim = await prisma.simulation.findFirstOrThrow({
-      where: { id, organizationId: user.organizationId, teleproId: user.id },
+    const persona = await getPersonaForSimulation({
+      simulationId: id,
+      organizationId: user.organizationId,
+      teleproId: user.id,
     });
-
-    const persona = await getPersonaForScenario(
-      sim.scenarioId,
-      user.organizationId,
-      sim.prospectName ?? "le prospect",
-    );
 
     const session = await getRealtimeSessionProvider().createEphemeralSession({
       instructions: persona,
