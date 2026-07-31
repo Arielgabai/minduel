@@ -3,13 +3,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   LIST_SENSITIVE_KEYS,
-  listItemLooksSafe,
-} from "@/app/admin/exercises/page";
-import {
   buildArtifactsFromEditor,
   buildMetadataPatchPayload,
   editorStateFromBundle,
   isArchivedReadOnly,
+  listItemLooksSafe,
   metaFormFromExercise,
   resolveApplySync,
   resolvePromptSaveAction,
@@ -18,10 +16,22 @@ import {
   type AdminExerciseDetail,
   type MetaFormState,
   type PromptEditorState,
-} from "@/app/admin/exercises/[id]/page";
+} from "@/lib/adminExercisesUi";
 
 function read(rel: string) {
   return readFileSync(path.resolve(rel), "utf8");
+}
+
+/** Next.js App Router : seuls certains exports sont autorisés depuis page.tsx. */
+function assertPageExportsOnlyDefault(rel: string) {
+  const src = read(rel);
+  expect(src).toMatch(/export\s+default\s+(async\s+)?function/);
+  // Aucun export nommé (const / function / type / interface / class / enum / let / var).
+  expect(src).not.toMatch(
+    /^\s*export\s+(const|function|type|interface|class|enum|let|var)\b/m,
+  );
+  expect(src).not.toMatch(/^\s*export\s*\{/m);
+  expect(src).not.toMatch(/^\s*export\s*\*/m);
 }
 
 describe("Admin UI — garde PLATFORM_ADMIN", () => {
@@ -71,7 +81,8 @@ describe("Admin UI — liste sans fuite", () => {
         new RegExp(`item\\.${key}|items\\.${key}|json\\.data\\.${key}`),
       );
     }
-    expect(src).toContain("LIST_SENSITIVE_KEYS");
+    expect(read("src/lib/adminExercisesUi.ts")).toContain("LIST_SENSITIVE_KEYS");
+    expect(src).toContain("@/lib/adminExercisesUi");
     expect(src).toContain('router.push(`/admin/exercises/${id}`)');
     expect(src).toMatch(/if\s*\(\s*!res\.ok\s*\)[\s\S]*?return;/);
   });
@@ -128,11 +139,13 @@ describe("Admin UI — éditeur et versions", () => {
 
   it("publication bundle puis exercice : actions distinctes dans le source", () => {
     const src = read("src/app/admin/exercises/[id]/page.tsx");
+    const helpers = read("src/lib/adminExercisesUi.ts");
     expect(src).toContain('action: "publishBundle"');
     expect(src).toContain('action: "publish"');
-    expect(src).toContain('"updateDraftPrompts"');
-    expect(src).toContain('"createVersion"');
+    expect(helpers).toContain('"updateDraftPrompts"');
+    expect(helpers).toContain('"createVersion"');
     expect(src).toContain("resolvePromptSaveAction");
+    expect(src).toContain('"createVersion"');
     expect(src).toContain("fromVersion");
     expect(src).toContain('action: "restoreVersion"');
     expect(src).toContain('action: "preview"');
@@ -368,5 +381,15 @@ describe("Admin UI — restauration panneau", () => {
     expect(src).toContain("secretInfos");
     expect(src).not.toMatch(/campaign:\s*meta\.campaign\s*\|\|\s*undefined/);
     expect(src).not.toMatch(/JSON\.stringify\(\s*meta\.secretInfos/);
+  });
+});
+
+describe("Admin UI — pages App Router sans exports nommés", () => {
+  it("page liste : export default uniquement", () => {
+    assertPageExportsOnlyDefault("src/app/admin/exercises/page.tsx");
+  });
+
+  it("page détail : export default uniquement", () => {
+    assertPageExportsOnlyDefault("src/app/admin/exercises/[id]/page.tsx");
   });
 });

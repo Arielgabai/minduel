@@ -1,6 +1,6 @@
 # État refonte Minduel
 
-**Dernière mise à jour :** 30/07/2026
+**Dernière mise à jour :** 31/07/2026
 
 ## Statut des documents
 
@@ -11,6 +11,7 @@
 | Plan admin exercices | `docs/refonte-minduel/02-PLAN_ADMIN_EXERCICES.md` | Validé §12 |
 | Audit terrain Ruben | `docs/refonte-minduel/references/audit_minduel_ruben_2026-07-29.md` | Disponible |
 | Maquette HTML | `docs/refonte-minduel/references/minduel webapp mvp.html` | Référence UX (non prod) |
+| Release runbook | `docs/refonte-minduel/RELEASE_RUNBOOK.md` | LOT R-DOCFIX — **GO local / prod conditionnelle** |
 
 ## Stack confirmée (une ligne)
 
@@ -44,9 +45,76 @@ Next.js 15 + React 19 + TypeScript + Tailwind v4, API App Router, Prisma 6 / Pos
 
 Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), préparation, appel simulé (turn/realtime), historique, profil, débrief unique (`/app/analysis/[id]`). Nav 3 onglets (`TeleproNav`). Données réelles ; les incohérences signalées par Ruben (croisement scénarios / timestamps) proviennent des **fixtures et données de démonstration** — pas d'anomalie établie sur les appels réellement réalisés ou générés en production.
 
+
+## Lot R — Gate de redéploiement (31/07/2026)
+
+**Statut gate release (LOT R initial) :** **NO-GO** (build — historique)
+
+**Statut gate après R-FIX / R-DOCFIX :** **GO local — GO production conditionnel aux vérifications manuelles Render et aux opérations du runbook**
+
+**Runbook :** `docs/refonte-minduel/RELEASE_RUNBOOK.md`
+
+**Vérifications locales :**
+
+| Commande | Résultat |
+|----------|----------|
+| `npm test` | OK — 244 tests / 17 fichiers (~27 s) |
+| `npx tsc --noEmit` | OK (~16 s) |
+| `npm run lint` | OK (~31 s) |
+| `npx prisma validate` | OK (~23 s) |
+| `npm run build` (LOT R) | **ÉCHEC** (~108 s) — exports pages admin |
+| `npm run build` (R-FIX) | **OK** (EXIT 0, ~74 s) |
+| `git diff --check` | OK |
+
+**Blocage initial :** exports non autorisés depuis les pages App Router admin — `src/app/admin/exercises/[id]/page.tsx` (`resolvePromptSaveAction` et helpers) et même classe de risque sur `src/app/admin/exercises/page.tsx`. **Corrigé en LOT R-FIX** (voir section suivante).
+
+**Non réalisé (volontairement) :** aucun déploiement Render, aucune migration, aucun backfill, aucune promotion admin, aucun seed, aucun appel OpenAI, aucune modification de base réelle.
+
+**Méthode Render détectée (doc + Dockerfile) :** Docker multi-stage ; Pre-Deploy documenté `npm run db:migrate:deploy` (à confirmer dans le dashboard) ; pas de `render.yaml` ; `prisma` + `tsx` dans l'image finale.
+
+
+
+## Lot R-FIX — Build admin + recheck gate (31/07/2026)
+
+**Statut gate release :** **GO local — GO production conditionnel aux vérifications manuelles Render et aux opérations du runbook**
+
+**Cause du premier NO-GO (LOT R) :** `npm run build` échouait car les pages App Router admin exportaient des helpers/types non autorisés (`resolvePromptSaveAction`, etc.).
+
+**Correctif appliqué :** extraction vers `src/lib/adminExercisesUi.ts` ; pages limitées à `export default` ; tests mis à jour (+ assertion exports).
+
+**Vérifications locales (recheck) :**
+
+| Commande | Résultat |
+|----------|----------|
+| `npm test -- tests/adminExercisesUi.test.ts` | OK — 26 tests |
+| `npx tsc --noEmit` | OK |
+| `npm run lint` | OK |
+| `npm run build` | **OK** (EXIT 0, ~74 s) |
+| `npm test` | OK — **246** tests / 17 fichiers (~20 s) |
+| `npx prisma validate` | OK |
+| `git diff --check` | OK |
+
+**Runbook :** `docs/refonte-minduel/RELEASE_RUNBOOK.md`
+
+**Actions Render toujours non exécutées :** aucun déploiement, migration, backfill, promote admin, seed, ni appel OpenAI.
+
+
+
+## Lot R-DOCFIX — Finalisation runbook (31/07/2026)
+
+**Décision :** **GO local — GO production conditionnel aux vérifications manuelles Render et aux opérations du runbook**
+
+**Livré :** réécriture cohérente de `docs/refonte-minduel/RELEASE_RUNBOOK.md` (historique LOT R vs état R-FIX, gate Render obligatoire §B.0, stratégies A/B/C, placeholder `<commit-r-fix>`, commandes npm/npx réparées, UTF-8 sans BOM + LF).
+
+**Vérifications locales (R-FIX, inchangées) :** build OK ; suite **246** tests ; pages admin = `export default` uniquement.
+
+**Non réalisé :** aucun déploiement, migration, backfill, promote, seed, OpenAI.
+
+**Prochaine action :** relire le diff → commit/push → renseigner `<commit-r-fix>` → dashboard Render → choisir A/B/C → sauvegarde avant prod.
+
 ## Prochain lot recommandé
 
-**Lot E** — snapshot `promptBundleId` / hash au `POST /api/simulations`, ou **Lot F** — soft-archive côté manager + seed, ou **Lot G** — UI `/admin/exercises`.
+**Gate local vert (R-FIX).** Production conditionnelle : inspecter le dashboard Render, choisir stratégie A/B/C du runbook, remplacer `<commit-r-fix>` après commit/push, sauvegarder la DB avant toute commande prod. Aucune migration/backfill/déploiement effectué.
 
 ## Questions ouvertes (3)
 

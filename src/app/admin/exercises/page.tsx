@@ -4,37 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card } from "@/components/ui";
-
-export const LIST_SENSITIVE_KEYS = [
-  "artifacts",
-  "contentHash",
-  "prompt",
-  "promptBundle",
-  "promptBundles",
-  "PROSPECT_PERSONA",
-  "EVALUATION_SYSTEM",
-  "EVALUATION_USER",
-] as const;
-
-export type AdminExerciseListItem = {
-  id: string;
-  name: string;
-  slug: string | null;
-  status: string;
-  level: string;
-  missionLevel: number;
-  sortOrder: number;
-  callType?: string;
-  updatedAt: string;
-  createdAt: string;
-};
-
-export function listItemLooksSafe(item: Record<string, unknown>): boolean {
-  for (const key of LIST_SENSITIVE_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(item, key)) return false;
-  }
-  return true;
-}
+import type { AdminExerciseListItem } from "@/lib/adminExercisesUi";
 
 async function readError(res: Response): Promise<string> {
   const json = await res.json().catch(() => null);
