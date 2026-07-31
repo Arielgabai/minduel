@@ -18,9 +18,11 @@ const items = [
 export function ManagerNav({
   orgName,
   userName,
+  showAdminLink = false,
 }: {
   orgName: string;
   userName: string;
+  showAdminLink?: boolean;
 }) {
   const pathname = usePathname();
   return (
@@ -33,6 +35,20 @@ export function ManagerNav({
       </Link>
 
       <nav className="flex-1 space-y-1">
+        {showAdminLink && (
+          <Link
+            href="/admin/exercises"
+            className={cx(
+              "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition",
+              pathname.startsWith("/admin")
+                ? "border border-electric-500/30 bg-electric-500/15 text-white"
+                : "text-white/55 hover:bg-white/5 hover:text-white/80",
+            )}
+          >
+            <span className="w-5 text-center">⚙️</span>
+            Administration
+          </Link>
+        )}
         {items.map((it) => {
           const active =
             it.href === "/manager"

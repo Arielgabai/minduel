@@ -71,3 +71,14 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 - Tests `tests/scenarioPromptPublication.test.ts` (P2002 réel, faux succès, P2034, v4, connaissances, assertions UI).
 
 **Hors périmètre :** migration, seed, backfill, admin (déjà conforme).
+
+## Lot G — Interface /admin/exercises (31/07/2026)
+
+**Livré :**
+
+- Surface `/admin` protégée par `requirePlatformAdmin` ; redirect `/admin` → `/admin/exercises`.
+- Liste filtrable + création DRAFT ; détail : métadonnées, prompts versionnés, preview locale, cycle de vie.
+- Lien Administration dans `ManagerNav` uniquement si `PLATFORM_ADMIN`.
+- Tests `tests/adminExercisesUi.test.ts`.
+
+**Hors périmètre :** migration, seed, backfill, OpenAI, changement Prisma/métier.
