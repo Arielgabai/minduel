@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getCurrentUser, isManager } from "@/lib/auth";
+import { getCurrentUser, isManager, isPlatformAdmin } from "@/lib/auth";
 import { isDemoMode } from "@/lib/config";
 import { DemoBanner } from "@/components/DemoBanner";
 import {
@@ -22,6 +22,7 @@ export default async function ManagerLayout({
       <ManagerNav
         orgName={user.organizationName ?? "—"}
         userName={user.fullName}
+        showAdminLink={isPlatformAdmin(user)}
       />
       <div className="lg:pl-64">
         <ManagerMobileHeader userName={user.fullName} />

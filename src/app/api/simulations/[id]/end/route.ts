@@ -27,6 +27,7 @@ export async function POST(
     const result = await finalizeSimulation({
       simulationId: id,
       organizationId: user.organizationId,
+      teleproId: user.id,
       durationSec: body.durationSec,
       abandoned: body.abandoned,
     });

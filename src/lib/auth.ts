@@ -95,6 +95,10 @@ export function isManager(user: SessionUser | null): boolean {
   return user?.role === Role.MANAGER || user?.role === Role.PLATFORM_ADMIN;
 }
 
+export function isPlatformAdmin(user: SessionUser | null): boolean {
+  return user?.role === Role.PLATFORM_ADMIN;
+}
+
 export function isTelepro(user: SessionUser | null): boolean {
   return user?.role === Role.TELEPRO;
 }
@@ -126,4 +130,28 @@ export async function requireTelepro(): Promise<
   if (!user.organizationId)
     throw new HttpError(403, "Aucune organisation associée.");
   return user as SessionUser & { organizationId: string };
+}
+
+/**
+ * Garde pure (testable) : PLATFORM_ADMIN strict + organisation.
+ * Pas d'auto-promotion : voir `npm run db:promote-admin`.
+ */
+export function assertPlatformAdmin(
+  user: SessionUser | null,
+): SessionUser & { organizationId: string } {
+  if (!user) throw new HttpError(401, "Authentification requise.");
+  if (!isPlatformAdmin(user)) {
+    throw new HttpError(403, "Accès réservé à l'administrateur plateforme.");
+  }
+  if (!user.organizationId) {
+    throw new HttpError(403, "Aucune organisation associée.");
+  }
+  return user as SessionUser & { organizationId: string };
+}
+
+/** Exige un PLATFORM_ADMIN via la session courante. */
+export async function requirePlatformAdmin(): Promise<
+  SessionUser & { organizationId: string }
+> {
+  return assertPlatformAdmin(await getCurrentUser());
 }

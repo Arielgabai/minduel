@@ -9,11 +9,19 @@ import {
 } from "./simulation";
 import { getEvaluationProvider, EvaluationResultSchema } from "./providers";
 import { DEFAULT_RUBRIC, type RubricCriterion } from "./rubric";
-import { SimulationStatus } from "./enums";
+import { SimulationStatus, PromptBundleStatus } from "./enums";
 import { HttpError } from "./httpError";
 import { log, safeErrorMessage } from "./log";
 import { JobType } from "./jobTypes";
 import { isFailedJobStatus } from "./jobStatus";
+import {
+  hashPromptArtifacts,
+  parsePromptArtifacts,
+  renderPromptTemplate,
+  verifyPromptArtifactsHash,
+  type SimulationPromptArtifacts,
+} from "./promptArtifacts";
+import type { EvaluationPromptOverrides } from "./providers";
 
 /** URL de la page d'analyse d'une simulation (jamais /app). */
 export function analysisUrlFor(simulationId: string): string {
@@ -45,7 +53,98 @@ async function loadApprovedKnowledge(scenario: {
   return items.map((k) => ({ type: k.type, title: k.title, content: k.content }));
 }
 
-/** Récupère la persona du prospect pour une simulation (mode réel : instructions Realtime). */
+type SimulationPromptSnapshot = {
+  promptBundleId: string | null;
+  promptBundleVersion: number | null;
+  promptContentHash: string | null;
+  scenarioId: string;
+  organizationId: string;
+};
+
+type ResolvedPinnedPromptBundle =
+  | { kind: "legacy" }
+  | { kind: "pinned"; artifacts: SimulationPromptArtifacts };
+
+/**
+ * Résout et valide le PromptBundle épinglé sur une Simulation.
+ * Ne consulte jamais Scenario.publishedPromptBundleId.
+ */
+async function resolvePinnedPromptBundle(
+  sim: SimulationPromptSnapshot,
+): Promise<ResolvedPinnedPromptBundle> {
+  const hasBundleId = sim.promptBundleId != null;
+  const hasVersion = sim.promptBundleVersion != null;
+  const hasHash = sim.promptContentHash != null;
+
+  if (!hasBundleId && !hasVersion && !hasHash) {
+    return { kind: "legacy" };
+  }
+
+  if (!hasBundleId || !hasVersion || !hasHash) {
+    throw new HttpError(
+      500,
+      "Snapshot de prompts incomplet pour la simulation.",
+    );
+  }
+
+  const bundle = await prisma.promptBundle.findFirst({
+    where: { id: sim.promptBundleId! },
+  });
+  if (!bundle) {
+    throw new HttpError(500, "Bundle de prompts introuvable pour la simulation.");
+  }
+  if (bundle.id !== sim.promptBundleId) {
+    throw new HttpError(500, "Bundle de prompts incohérent avec la simulation.");
+  }
+  if (
+    bundle.scenarioId !== sim.scenarioId ||
+    bundle.organizationId !== sim.organizationId
+  ) {
+    throw new HttpError(500, "Bundle de prompts incohérent avec la simulation.");
+  }
+  if (bundle.version !== sim.promptBundleVersion) {
+    throw new HttpError(500, "Version du bundle de prompts incohérente.");
+  }
+  if (bundle.contentHash !== sim.promptContentHash) {
+    throw new HttpError(500, "Hash du bundle de prompts incohérent.");
+  }
+  if (
+    bundle.status !== PromptBundleStatus.PUBLISHED &&
+    bundle.status !== PromptBundleStatus.SUPERSEDED
+  ) {
+    throw new HttpError(500, "Bundle de prompts non utilisable pour la simulation.");
+  }
+
+  let artifacts: SimulationPromptArtifacts;
+  try {
+    artifacts = parsePromptArtifacts(bundle.artifacts);
+  } catch {
+    throw new HttpError(500, "Bundle de prompts incohérent.");
+  }
+  const computedHash = hashPromptArtifacts(artifacts);
+  if (computedHash !== sim.promptContentHash) {
+    throw new HttpError(500, "Artifacts du bundle de prompts incohérents.");
+  }
+  if (!verifyPromptArtifactsHash(artifacts, bundle.contentHash)) {
+    throw new HttpError(500, "Bundle de prompts incohérent.");
+  }
+
+  return { kind: "pinned", artifacts };
+}
+
+function evaluationOverridesFromArtifacts(
+  artifacts: SimulationPromptArtifacts,
+): EvaluationPromptOverrides | undefined {
+  const system = artifacts.EVALUATION_SYSTEM?.body;
+  const user = artifacts.EVALUATION_USER?.body;
+  if (!system && !user) return undefined;
+  return {
+    ...(system ? { system } : {}),
+    ...(user ? { user } : {}),
+  };
+}
+
+/** Récupère la persona du prospect pour un scénario (preview manager, hors snapshot). */
 export async function getPersonaForScenario(
   scenarioId: string,
   organizationId: string,
@@ -58,6 +157,46 @@ export async function getPersonaForScenario(
   return buildProspectPersona(scenario as ScenarioForSim, knowledge, prospectName);
 }
 
+/**
+ * Résout la persona Realtime depuis le snapshot PromptBundle épinglé sur la Simulation.
+ * Ne consulte jamais Scenario.publishedPromptBundleId pour une simulation existante.
+ */
+export async function getPersonaForSimulation(input: {
+  simulationId: string;
+  organizationId: string;
+  teleproId: string;
+}): Promise<string> {
+  const sim = await prisma.simulation.findFirst({
+    where: {
+      id: input.simulationId,
+      organizationId: input.organizationId,
+      teleproId: input.teleproId,
+    },
+    include: { scenario: true },
+  });
+  if (!sim) throw new HttpError(404, "Simulation introuvable.");
+
+  const prospectName = sim.prospectName ?? "le prospect";
+
+  const resolved = await resolvePinnedPromptBundle(sim);
+  if (resolved.kind === "legacy") {
+    const knowledge = await loadApprovedKnowledge(sim.scenario);
+    return buildProspectPersona(
+      sim.scenario as ScenarioForSim,
+      knowledge,
+      prospectName,
+    );
+  }
+
+  return renderPromptTemplate(resolved.artifacts.PROSPECT_PERSONA.body, {
+    prospectName,
+    offer: sim.scenario.offer ?? "",
+    callType: sim.scenario.callType,
+    level: sim.scenario.level,
+    objective: sim.scenario.objective ?? "",
+  });
+}
+
 /** Génère la réplique d'ouverture du prospect (mode démo). */
 export function opener(level: string): string {
   return demoProspectOpener(level);
@@ -67,12 +206,18 @@ export function opener(level: string): string {
 export async function processTurn(input: {
   simulationId: string;
   organizationId: string;
+  teleproId: string;
   agentMessage: string;
 }): Promise<{ prospect: string; shouldEnd: boolean; outcome: string | null }> {
-  const sim = await prisma.simulation.findFirstOrThrow({
-    where: { id: input.simulationId, organizationId: input.organizationId },
+  const sim = await prisma.simulation.findFirst({
+    where: {
+      id: input.simulationId,
+      organizationId: input.organizationId,
+      teleproId: input.teleproId,
+    },
     include: { scenario: true, turns: { orderBy: { atMs: "asc" } } },
   });
+  if (!sim) throw new HttpError(404, "Simulation introuvable.");
 
   const history = sim.turns.map((t) => ({ role: t.role, content: t.content }));
   const lastMs = sim.turns.at(-1)?.atMs ?? 0;
@@ -128,13 +273,19 @@ export async function processTurn(input: {
 export async function appendRealtimeTurn(input: {
   simulationId: string;
   organizationId: string;
+  teleproId: string;
   role: "AGENT" | "PROSPECT";
   content: string;
 }): Promise<void> {
-  const sim = await prisma.simulation.findFirstOrThrow({
-    where: { id: input.simulationId, organizationId: input.organizationId },
+  const sim = await prisma.simulation.findFirst({
+    where: {
+      id: input.simulationId,
+      organizationId: input.organizationId,
+      teleproId: input.teleproId,
+    },
     include: { turns: { orderBy: { atMs: "desc" }, take: 1 } },
   });
+  if (!sim) throw new HttpError(404, "Simulation introuvable.");
 
   const lastMs = sim.turns[0]?.atMs ?? 0;
   await prisma.simulationTurn.create({
@@ -177,17 +328,23 @@ export type FinalizeResult =
 export async function finalizeSimulation(input: {
   simulationId: string;
   organizationId: string;
+  teleproId: string;
   durationSec: number;
   outcome?: string | null;
   abandoned?: boolean;
 }): Promise<FinalizeResult> {
-  const sim = await prisma.simulation.findFirstOrThrow({
-    where: { id: input.simulationId, organizationId: input.organizationId },
+  const sim = await prisma.simulation.findFirst({
+    where: {
+      id: input.simulationId,
+      organizationId: input.organizationId,
+      teleproId: input.teleproId,
+    },
     include: {
       turns: { select: { role: true } },
       evaluation: { select: { id: true } },
     },
   });
+  if (!sim) throw new HttpError(404, "Simulation introuvable.");
 
   const analysisUrl = analysisUrlFor(sim.id);
 
@@ -341,6 +498,12 @@ export async function runSimulationEvaluation(
     atMs: t.atMs,
   }));
 
+  const pinnedBundle = await resolvePinnedPromptBundle(sim);
+  const evaluationPromptOverrides =
+    pinnedBundle.kind === "pinned"
+      ? evaluationOverridesFromArtifacts(pinnedBundle.artifacts)
+      : undefined;
+
   // Validation Zod AVANT écriture : une réponse malformée ne peut pas être
   // enregistrée comme une évaluation réussie.
   const result = EvaluationResultSchema.parse(
@@ -352,10 +515,13 @@ export async function runSimulationEvaluation(
       scenarioName: sim.scenario.name,
       callType: sim.scenario.callType,
       objective: sim.scenario.objective ?? undefined,
+      offer: sim.scenario.offer ?? undefined,
+      prospectName: sim.prospectName ?? undefined,
       prospectProfile: sim.scenario.prospectProfile ?? undefined,
       successConditions: sim.scenario.successConditions ?? undefined,
       failureConditions: sim.scenario.failureConditions ?? undefined,
       knowledge,
+      evaluationPromptOverrides,
     }),
   );
   log.info("evaluation.openai_completed", {

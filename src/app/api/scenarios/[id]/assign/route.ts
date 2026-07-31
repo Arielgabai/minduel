@@ -2,6 +2,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { handle, ok, fail } from "@/lib/api";
 import { requireManager } from "@/lib/auth";
+import { ScenarioStatus } from "@/lib/enums";
 import { nowIso } from "@/lib/utils";
 
 const schema = z.object({
@@ -21,7 +22,10 @@ export async function POST(
       where: { id, organizationId: manager.organizationId },
     });
     if (!scenario) return fail(404, "Scénario introuvable.");
-    if (scenario.status !== "PUBLISHED") {
+    if (scenario.status === ScenarioStatus.ARCHIVED) {
+      return fail(409, "Scénario archivé : assignation interdite.");
+    }
+    if (scenario.status !== ScenarioStatus.PUBLISHED) {
       return fail(400, "Publie le scénario avant de l'assigner.");
     }
 

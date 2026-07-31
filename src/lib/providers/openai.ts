@@ -13,6 +13,7 @@ import {
   AnonymizationSchema,
 } from "./schemas";
 import { getAudioStorage } from "./storage";
+import { renderPromptTemplate } from "../promptArtifacts";
 import type {
   EvaluationProvider,
   EvaluationInput,
@@ -127,6 +128,13 @@ export class OpenAIRealtimeSessionProvider implements RealtimeSessionProvider {
  * La clé API ne quitte pas le serveur ; le transcript complet n'est jamais journalisé.
  */
 const OUTCOME_VALUES = ["VENTE", "REFUS", "RAPPEL", "RDV", "AUTRE"] as const;
+
+/** Contraintes JSON non supprimables lors d'un override EVALUATION_SYSTEM. */
+const EVALUATION_JSON_SERVER_BLOCK = [
+  "- Respecte STRICTEMENT le schéma JSON demandé.",
+  "- Pour chaque critère de la grille, renvoie un objet skillScores avec la MÊME clé 'key'.",
+  "- score doit être compris entre 0 et maxScore (la pondération du critère).",
+].join("\n");
 
 const EVALUATION_JSON_SCHEMA = {
   type: "object",
@@ -334,24 +342,10 @@ export class OpenAIEvaluationProvider implements EvaluationProvider {
 }
 
 /** Construit le prompt d'évaluation (contexte scénario + grille + transcript). */
-function buildEvaluationPrompt(input: EvaluationInput): {
+export function buildEvaluationPrompt(input: EvaluationInput): {
   system: string;
   user: string;
 } {
-  const system = [
-    "Tu es un coach expert en téléprospection et vente par téléphone.",
-    "Tu évalues un appel simulé entre un TÉLÉPRO (l'agent en formation) et un PROSPECT (client simulé).",
-    "Règles STRICTES :",
-    "- Évalue UNIQUEMENT à partir du transcript fourni.",
-    "- N'invente aucun comportement vocal non mesurable (ton, débit) qui ne ressort pas du texte.",
-    "- Chaque critique doit s'appuyer sur une preuve (courte citation) quand elle existe.",
-    "- Ne pénalise pas une information que le prospect n'a jamais permis de découvrir.",
-    "- Produis des conseils concrets et actionnables, en français.",
-    "- Respecte STRICTEMENT le schéma JSON demandé.",
-    "- Pour chaque critère de la grille, renvoie un objet skillScores avec la MÊME clé 'key'.",
-    "- score doit être compris entre 0 et maxScore (la pondération du critère).",
-  ].join("\n");
-
   const rubricLines = input.rubric
     .map((c) => `- ${c.key} — ${c.label} (pondération / maxScore : ${c.weight})`)
     .join("\n");
@@ -368,7 +362,19 @@ function buildEvaluationPrompt(input: EvaluationInput): {
       ? input.knowledge.map((k) => `- (${k.type}) ${k.title} : ${k.content}`).join("\n")
       : "(aucune)";
 
-  const user = [
+  const defaultSystem = [
+    "Tu es un coach expert en téléprospection et vente par téléphone.",
+    "Tu évalues un appel simulé entre un TÉLÉPRO (l'agent en formation) et un PROSPECT (client simulé).",
+    "Règles STRICTES :",
+    "- Évalue UNIQUEMENT à partir du transcript fourni.",
+    "- N'invente aucun comportement vocal non mesurable (ton, débit) qui ne ressort pas du texte.",
+    "- Chaque critique doit s'appuyer sur une preuve (courte citation) quand elle existe.",
+    "- Ne pénalise pas une information que le prospect n'a jamais permis de découvrir.",
+    "- Produis des conseils concrets et actionnables, en français.",
+    EVALUATION_JSON_SERVER_BLOCK,
+  ].join("\n");
+
+  const defaultUser = [
     `Scénario : ${input.scenarioName ?? "(non précisé)"}`,
     `Type d'appel : ${input.callType ?? "(non précisé)"}`,
     `Niveau : ${input.scenarioLevel}`,
@@ -388,6 +394,31 @@ function buildEvaluationPrompt(input: EvaluationInput): {
     "",
     "Renvoie l'évaluation structurée conforme au schéma. Le champ outcome doit valoir l'un de : VENTE, REFUS, RAPPEL, RDV, AUTRE.",
   ].join("\n");
+
+  const overrides = input.evaluationPromptOverrides;
+  if (!overrides?.system && !overrides?.user) {
+    return { system: defaultSystem, user: defaultUser };
+  }
+
+  const templateVars: Record<string, string> = {
+    scenarioName: input.scenarioName ?? "(non précisé)",
+    callType: input.callType ?? "(non précisé)",
+    level: input.scenarioLevel,
+    objective: input.objective ?? "(non précisé)",
+    offer: input.offer ?? "(non précisé)",
+    prospectName: input.prospectName ?? "(non précisé)",
+    transcript: transcriptLines,
+    rubric: rubricLines,
+    knowledge: knowledgeLines,
+  };
+
+  const system = overrides.system
+    ? `${renderPromptTemplate(overrides.system, templateVars)}\n${EVALUATION_JSON_SERVER_BLOCK}`
+    : defaultSystem;
+
+  const user = overrides.user
+    ? renderPromptTemplate(overrides.user, templateVars)
+    : defaultUser;
 
   return { system, user };
 }

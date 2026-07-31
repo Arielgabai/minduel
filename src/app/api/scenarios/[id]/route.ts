@@ -2,7 +2,9 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { handle, ok, fail } from "@/lib/api";
 import { requireManager } from "@/lib/auth";
+import { ScenarioStatus } from "@/lib/enums";
 import { nowIso, stringifyJson } from "@/lib/utils";
+import { applyManagerScenarioPatch } from "@/lib/scenarioPromptPublication";
 
 const schema = z.object({
   name: z.string().min(2).max(160).optional(),
@@ -32,35 +34,13 @@ export async function PATCH(
     const { id } = await params;
     const body = schema.parse(await req.json());
 
-    const scenario = await prisma.scenario.findFirst({
-      where: { id, organizationId: manager.organizationId },
+    const result = await applyManagerScenarioPatch({
+      organizationId: manager.organizationId,
+      actorId: manager.id,
+      scenarioId: id,
+      patch: body,
     });
-    if (!scenario) return fail(404, "Scénario introuvable.");
-
-    const updated = await prisma.scenario.update({
-      where: { id },
-      data: {
-        name: body.name ?? scenario.name,
-        callType: body.callType ?? scenario.callType,
-        level: body.level ?? scenario.level,
-        campaign: body.campaign !== undefined ? body.campaign : scenario.campaign,
-        offer: body.offer !== undefined ? body.offer : scenario.offer,
-        prospectProfile: body.prospectProfile !== undefined ? body.prospectProfile : scenario.prospectProfile,
-        initialSituation: body.initialSituation !== undefined ? body.initialSituation : scenario.initialSituation,
-        objective: body.objective !== undefined ? body.objective : scenario.objective,
-        personality: body.personality !== undefined ? body.personality : scenario.personality,
-        allowedObjections: body.allowedObjections ? stringifyJson(body.allowedObjections) : scenario.allowedObjections,
-        secretInfos: body.secretInfos ? stringifyJson(body.secretInfos) : scenario.secretInfos,
-        successConditions: body.successConditions !== undefined ? body.successConditions : scenario.successConditions,
-        failureConditions: body.failureConditions !== undefined ? body.failureConditions : scenario.failureConditions,
-        targetDurationSec: body.targetDurationSec ?? scenario.targetDurationSec,
-        knowledgeRefs: body.knowledgeRefs ? stringifyJson(body.knowledgeRefs) : scenario.knowledgeRefs,
-        status: body.status ?? scenario.status,
-        updatedAt: nowIso(),
-      },
-    });
-
-    return ok({ id: updated.id, status: updated.status });
+    return ok({ id: result.id, status: result.status });
   });
 }
 
@@ -71,11 +51,62 @@ export async function DELETE(
   return handle(async () => {
     const manager = await requireManager();
     const { id } = await params;
-    const scenario = await prisma.scenario.findFirst({
-      where: { id, organizationId: manager.organizationId },
+
+    const outcome = await prisma.$transaction(async (tx) => {
+      const scenario = await tx.scenario.findFirst({
+        where: { id, organizationId: manager.organizationId },
+      });
+      if (!scenario) return { kind: "not_found" as const };
+      if (scenario.status === ScenarioStatus.ARCHIVED) {
+        return { kind: "already" as const, id: scenario.id };
+      }
+
+      const previousStatus = scenario.status;
+
+      const result = await tx.scenario.updateMany({
+        where: {
+          id,
+          organizationId: manager.organizationId,
+          status: { not: ScenarioStatus.ARCHIVED },
+        },
+        data: {
+          status: ScenarioStatus.ARCHIVED,
+          updatedAt: nowIso(),
+        },
+      });
+
+      if (result.count === 1) {
+        await tx.auditEvent.create({
+          data: {
+            organizationId: manager.organizationId,
+            actorId: manager.id,
+            action: "EXERCISE_ARCHIVE",
+            targetType: "Scenario",
+            targetId: scenario.id,
+            metadata: stringifyJson({ previousStatus }),
+            createdAt: nowIso(),
+          },
+        });
+        return { kind: "archived" as const, id: scenario.id };
+      }
+
+      const again = await tx.scenario.findFirst({
+        where: { id, organizationId: manager.organizationId },
+      });
+      if (again?.status === ScenarioStatus.ARCHIVED) {
+        return { kind: "already" as const, id: again.id };
+      }
+      return { kind: "not_found" as const };
     });
-    if (!scenario) return fail(404, "Scénario introuvable.");
-    await prisma.scenario.delete({ where: { id } });
-    return ok({ deleted: true });
+
+    if (outcome.kind === "not_found") {
+      return fail(404, "Scénario introuvable.");
+    }
+
+    return ok({
+      id: outcome.id,
+      status: ScenarioStatus.ARCHIVED,
+      archived: true,
+    });
   });
 }

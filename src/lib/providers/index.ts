@@ -45,7 +45,7 @@ export {
   SpeakerAttributionSchema,
   AnonymizationSchema,
 } from "./schemas";
-export { normalizeScenarioWeights } from "./openai";
+export { normalizeScenarioWeights, buildEvaluationPrompt } from "./openai";
 
 /**
  * Sélecteurs de providers — séparation EXPLICITE démo / réel (aucune bascule

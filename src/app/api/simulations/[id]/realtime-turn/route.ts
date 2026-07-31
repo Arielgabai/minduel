@@ -25,6 +25,7 @@ export async function POST(
     await appendRealtimeTurn({
       simulationId: id,
       organizationId: user.organizationId,
+      teleproId: user.id,
       role,
       content,
     });

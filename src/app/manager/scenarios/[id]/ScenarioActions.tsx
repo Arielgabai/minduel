@@ -6,24 +6,42 @@ import { useRouter } from "next/navigation";
 export function ScenarioActions({
   id,
   status,
+  allowArchive = true,
 }: {
   id: string;
   status: string;
+  /** Masquage défensif si le scénario est déjà ARCHIVED. */
+  allowArchive?: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ prospectName: string; opener: string; persona: string } | null>(null);
 
   async function togglePublish() {
+    if (busy) return;
     setBusy(true);
+    setError(null);
     try {
-      await fetch(`/api/scenarios/${id}`, {
+      const res = await fetch(`/api/scenarios/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: status === "PUBLISHED" ? "DRAFT" : "PUBLISHED" }),
       });
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        setError(
+          json?.error?.message ??
+            "Publication impossible. Réessaie ou contacte un administrateur.",
+        );
+        return;
+      }
       router.refresh();
+    } catch {
+      setError(
+        "Publication impossible. Réessaie ou contacte un administrateur.",
+      );
     } finally {
       setBusy(false);
     }
@@ -31,6 +49,7 @@ export function ScenarioActions({
 
   async function test() {
     setBusy(true);
+    setError(null);
     try {
       const res = await fetch(`/api/scenarios/${id}/preview`, { method: "POST" });
       const json = await res.json();
@@ -40,12 +59,24 @@ export function ScenarioActions({
     }
   }
 
-  async function remove() {
+  async function archive() {
+    if (busy) return;
     setBusy(true);
+    setError(null);
     try {
-      await fetch(`/api/scenarios/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/scenarios/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        setError(
+          json?.error?.message ??
+            "Impossible d'archiver le scénario. Réessaie.",
+        );
+        return;
+      }
       router.push("/manager/scenarios");
       router.refresh();
+    } catch {
+      setError("Impossible d'archiver le scénario. Réessaie.");
     } finally {
       setBusy(false);
     }
@@ -59,19 +90,43 @@ export function ScenarioActions({
       <button onClick={togglePublish} disabled={busy} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/70">
         {status === "PUBLISHED" ? "Dépublier" : "Publier"}
       </button>
-      {confirmDelete ? (
-        <>
-          <button onClick={remove} disabled={busy} className="rounded-lg bg-red-500/90 px-3 py-2 text-sm text-white">
-            Confirmer
+      {allowArchive &&
+        (confirmArchive ? (
+          <div className="flex w-full flex-col gap-2 sm:w-auto">
+            <p className="max-w-sm text-xs text-white/55">
+              L&apos;exercice ne sera plus proposé aux télépros mais l&apos;historique sera conservé.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={archive}
+                disabled={busy}
+                className="rounded-lg bg-red-500/90 px-3 py-2 text-sm text-white disabled:opacity-50"
+              >
+                Confirmer l&apos;archivage
+              </button>
+              <button
+                onClick={() => setConfirmArchive(false)}
+                disabled={busy}
+                className="rounded-lg border border-white/10 px-3 py-2 text-sm text-white/60"
+              >
+                Annuler
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setConfirmArchive(true)}
+            disabled={busy}
+            className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300"
+          >
+            Archiver
           </button>
-          <button onClick={() => setConfirmDelete(false)} className="rounded-lg border border-white/10 px-3 py-2 text-sm text-white/60">
-            Annuler
-          </button>
-        </>
-      ) : (
-        <button onClick={() => setConfirmDelete(true)} disabled={busy} className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
-          🗑
-        </button>
+        ))}
+
+      {error && (
+        <p className="w-full text-sm text-red-300" role="alert">
+          {error}
+        </p>
       )}
 
       {preview && (
