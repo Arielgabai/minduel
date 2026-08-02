@@ -692,18 +692,26 @@ describe("Accueil télépro — filtre Prisma PUBLISHED", () => {
       },
     ];
 
+    const serviceSrc = readFileSync(
+      path.resolve("src/lib/teleproMissionsService.ts"),
+      "utf8",
+    );
     const pageSrc = readFileSync(
       path.resolve("src/app/app/page.tsx"),
       "utf8",
     );
-    // Filtre relationnel Prisma dans le where — pas un .filter JS post-chargement.
-    expect(pageSrc).toContain('scenario: { status: "PUBLISHED" }');
-    expect(pageSrc).toMatch(/scenario:\s*\{\s*status:\s*["']PUBLISHED["']\s*\}/);
-    expect(pageSrc).not.toMatch(
+    // Filtre relationnel Prisma dans le service partagé — pas un .filter JS post-chargement.
+    expect(serviceSrc).toContain("ScenarioStatus.PUBLISHED");
+    expect(serviceSrc).toMatch(/status:\s*ScenarioStatus\.PUBLISHED/);
+    expect(serviceSrc).not.toMatch(
       /assignments\.filter\([^)]*ARCHIVED/,
     );
-    expect(pageSrc).not.toMatch(
+    expect(serviceSrc).not.toMatch(
       /\.filter\(\s*\(?a\)?\s*=>\s*a\.scenario\.status/,
+    );
+    expect(pageSrc).toContain("loadTeleproMissionsView");
+    expect(pageSrc).not.toMatch(
+      /assignments\.filter\([^)]*ARCHIVED/,
     );
 
     const { prisma } = await import("@/lib/db");
@@ -711,16 +719,30 @@ describe("Accueil télépro — filtre Prisma PUBLISHED", () => {
       where: {
         teleproId: TELEPRO_ID,
         organizationId: ORG,
-        scenario: { status: "PUBLISHED" },
+        scenario: {
+          status: ScenarioStatus.PUBLISHED,
+          organizationId: ORG,
+        },
       },
-      include: { scenario: true },
-      orderBy: { createdAt: "desc" },
+      select: {
+        scenario: {
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            organizationId: true,
+          },
+        },
+      },
     });
     expect(lastAssignmentFindManyArgs).toMatchObject({
       where: {
         teleproId: TELEPRO_ID,
         organizationId: ORG,
-        scenario: { status: "PUBLISHED" },
+        scenario: {
+          status: ScenarioStatus.PUBLISHED,
+          organizationId: ORG,
+        },
       },
     });
   });

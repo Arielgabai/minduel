@@ -114,7 +114,7 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 
 ## Prochain lot recommandé
 
-**Lot H (shell télépro) livré localement — non déployé.** Prochain : lot Missions dynamiques (niveaux, verrous, recommandation). Production shell : commit/push puis déploiement Render selon runbook, sans migration.
+**Lot I (missions dynamiques) livré localement — non déployé.** Prochain : Skills et/ou analytics Progression. Production : commit/push puis déploiement Render selon runbook, sans migration.
 
 ## Questions ouvertes (3)
 
@@ -184,3 +184,48 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 | `git diff --check` | OK |
 
 **Non réalisé :** aucun déploiement, migration, seed, backfill, OpenAI, micro, upload, ni commit.
+
+## Lot I / Lot 9 — Missions et exercices dynamiques (02/08/2026)
+
+**Objectif :** pages Accueil et Missions alimentées par les exercices PUBLISHED assignés au téléprospecteur, avec statuts calculés, déblocage de niveaux et recommandation locale.
+
+**Livré :**
+
+- Moteur pur `src/lib/teleproMissions.ts` : tri déterministe (`missionLevel` → `sortOrder` → `name` → `id`), statuts `COMPLETED` / `IN_PROGRESS` / `AVAILABLE` / `LOCKED`, déblocage des niveaux présents, recommandation locale, résultat précédent.
+- Service serveur `src/lib/teleproMissionsService.ts` : charge assignations + tentatives (2 requêtes, isolation `organizationId` + `teleproId`, `Scenario.status === PUBLISHED`), projection sûre sans prompts / artifacts / hash / `secretInfos` / `aiProspect`.
+- `/app` (Accueil) : progression terminé/total, exercice recommandé, CTA reprendre/commencer, états vide et tout terminé.
+- `/app/missions` : groupes par niveau, badges, infos métier sûres, CTA selon statut, résultat précédent / débrief existant.
+- Tests `tests/teleproMissions.test.ts` (visibilité, tri, déblocage, statuts, recommandation, CTA, anti-fuite).
+
+**Règles de statut (non persistées) :**
+
+1. Tentative runtime terminée (`FINALIZING` | `EVALUATION_PENDING` | `EVALUATING` | `COMPLETED` | `EVALUATION_FAILED`) → `COMPLETED` (sans exiger une évaluation OpenAI réussie).
+2. Sinon tentative active (`CREATED` | `IN_PROGRESS`) → `IN_PROGRESS`.
+3. Sinon niveau débloqué → `AVAILABLE`.
+4. Sinon → `LOCKED`.
+5. `COMPLETED` / `IN_PROGRESS` restent prioritaires sur le verrouillage.
+
+**Déblocage :** plus petit `missionLevel` présent ouvert ; niveau suivant ouvert seulement si tous les exercices des niveaux précédents effectivement présents sont terminés ; trou de numéros sans blocage artificiel.
+
+**Recommandation :** premier `IN_PROGRESS` (ordre déterministe), sinon premier `AVAILABLE`, sinon aucune.
+
+**CTA :** `IN_PROGRESS` → `/app/call/[id]` ; `AVAILABLE` / refaire → `/app/prepare/[scenarioId]` ; `LOCKED` → aucun lien lançable ; débrief → `/app/analysis/[id]` si tentative terminée.
+
+**Reporté (Skills / Progression) :**
+
+- Contenu Skills (catégories, articles, scores).
+- Analytics Progression (Tendances, Comparatif, Diagnostic, Badges) au-delà de l'historique existant.
+
+**Vérifications locales :**
+
+| Commande | Résultat |
+|----------|----------|
+| `npm test` | OK — **286** tests / 19 fichiers (~59 s) |
+| `npx tsc --noEmit` | OK (EXIT 0, ~50 s) |
+| `npm run lint --if-present` | OK — No ESLint warnings or errors (~56 s) |
+| `npm run build` | OK (EXIT 0, ~214 s) — routes `/app` et `/app/missions` dynamiques |
+| `git diff --check` | OK |
+
+**Non réalisé :** aucun déploiement, migration, seed, backfill, OpenAI, micro, upload, ni commit. Branche non déployée.
+
+**Prochain lot recommandé :** Skills et/ou analytics Progression (hors historique).
