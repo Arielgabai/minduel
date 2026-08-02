@@ -6,7 +6,7 @@
 
 | Document | Emplacement | Statut |
 |----------|-------------|--------|
-| DESIGN_SPEC (UX) | `docs/refonte-minduel/DESIGN_SPEC.md` | Rédigé (réf. maquette) |
+| DESIGN_SPEC (UX) | `docs/refonte-minduel/DESIGN_SPEC.md` | **J0** — mis à jour depuis maquette V2 (PDF p.14–41) |
 | Audit technique | `docs/refonte-minduel/01-AUDIT_TECHNIQUE.md` | Rédigé (ce cycle) |
 | Plan admin exercices | `docs/refonte-minduel/02-PLAN_ADMIN_EXERCICES.md` | Validé §12 |
 | Audit terrain Ruben | `docs/refonte-minduel/references/audit_minduel_ruben_2026-07-29.md` | Disponible |
@@ -112,14 +112,27 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 
 **Prochaine action :** relire le diff → commit/push → renseigner `<commit-r-fix>` → dashboard Render → choisir A/B/C → sauvegarde avant prod.
 
-## Prochain lot recommandé
+## Feuille de route post-J0
 
-**Lot I (missions dynamiques) livré localement — non déployé.** Prochain : Skills et/ou analytics Progression. Production : commit/push puis déploiement Render selon runbook, sans migration.
+| Lot | Objectif |
+|-----|----------|
+| **J1** | Schéma / service / API Skills (contenu paramétrable, zéro OpenAI) |
+| **J2** | UI admin Skills (`/admin`) — CRUD, aperçu, publish/archive, ordre |
+| **J3** | UI téléprospecteur Skills (catégories → sections → articles `PUBLISHED`) |
+| **K** | Débrief en 4 onglets + liens Skills (données persistées uniquement) |
+| **L** | Alignement visuel Missions / appel / fin d’exercice |
+| **M** | Progression avancée (Tendances, Comparatif, Diagnostic, Badges) |
+| **Ultérieur** | Upload manuel + analyse d’appels réels + écart simulé/réel (coûts IA) |
+| **Reporté** | Ringover (aucune connexion, synchro, env, route, ni mention « disponible ») |
+
+**Contenu Skills :** intégralement administrable ; **aucune donnée de production Skills n’a été créée** (J0 documentaire uniquement).
+
+**Prochain lot recommandé :** **J1** (schéma/service/API Skills). Lot I livré localement — non déployé. Production app : commit/push puis Render selon runbook, sans migration liée à J0.
 
 ## Questions ouvertes (3)
 
 1. Pipeline CI et déploiement Render documentés où ?
-2. Stratégie de validation des débriefs sur de futurs appels réels ou générés avant mise en production ?
+2. Seuil d’anonymisation et permissions exactes pour le comparatif équipe (Progression / débrief) avant lot M ?
 3. Backfill bundles v1 DRAFT pour scénarios démo existants : script séparé ou intégrer au seed exercices ?
 
 ## Contraintes actives (règles refonte)
@@ -228,4 +241,22 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 
 **Non réalisé :** aucun déploiement, migration, seed, backfill, OpenAI, micro, upload, ni commit. Branche non déployée.
 
-**Prochain lot recommandé :** Skills et/ou analytics Progression (hors historique).
+## Lot J0 — Spec UX depuis maquette V2 (02/08/2026)
+
+**Objectif unique :** mettre à jour `DESIGN_SPEC.md` et la feuille de route dans `STATE.md` à partir des pages 14–41 du PDF maquette V2 (pièce jointe locale, non versionnée).
+
+**Livré (documentaire uniquement) :**
+
+- Missions : phases/niveaux, états terminé/courant/verrouillé, progression par exercices réels, parcours à nœuds, recommandation, mobile — ancré sur `Scenario` / `ScenarioAssignment` / `Simulation` et règles du lot I.
+- Appel immersif + écran de fin (score, points forts, axe, accès débrief) — sans modifier le runtime ni OpenAI.
+- Débrief 4 onglets (Résumé, Ligne par ligne, Pourquoi, Comparatif) : données persistées seulement, états absents explicites, pas de recalcul au chargement.
+- Contrat fonctionnel Skills administrable (catégorie / section / article, statuts, blocs sûrs, admin `/admin`) ; catégories maquette = exemples initiaux.
+- Appels réels (upload + analyse + écart simulé/réel) classés **ultérieurs** ; Ringover **reporté** (hors périmètre actif).
+- Progression : Tendances, Comparatif, Diagnostic, Badges — valeurs persistées, états vides, anonymisation équipe à trancher avant M.
+- Direction visuelle condensée (fond quasi noir, cartes, pilules, dégradés, a11y tactile).
+
+**Fichiers touchés :** `docs/refonte-minduel/DESIGN_SPEC.md`, `docs/refonte-minduel/STATE.md` uniquement.
+
+**Vérifications :** `git diff --check` ; UTF-8 sans BOM ; fins de ligne LF.
+
+**Non réalisé :** aucun code applicatif, dépendance, migration, seed, base, réseau, OpenAI, upload, ni commit.
