@@ -1,10 +1,11 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Waveform } from "@/components/Waveform";
 import { LEVEL_LABELS } from "@/lib/enums";
 import { cx, formatDuration } from "@/lib/utils";
+import { generateInitials } from "@/lib/callUi";
 import { useRealtimeSession, type RealtimePhase } from "./useRealtimeSession";
 
 type Turn = { role: string; content: string };
@@ -61,10 +62,10 @@ export function RealtimeCallClient(props: Props) {
       onTurn: persistTurn,
     });
 
-  // Already evaluated -> go straight to the analysis.
+  // Already evaluated -> go straight to the end-of-exercise screen (never /end).
   useEffect(() => {
     if (props.alreadyEvaluated) {
-      router.replace(`/app/analysis/${props.simulationId}`);
+      router.replace(`/app/call/${props.simulationId}/done`);
     }
   }, [props.alreadyEvaluated, props.simulationId, router]);
 
@@ -111,8 +112,9 @@ export function RealtimeCallClient(props: Props) {
           router.replace(data.redirect ?? "/app");
           return;
         }
-        // Vers l'analyse (jamais /app) : la page d'analyse affiche la progression.
-        router.replace(data.analysisUrl ?? `/app/analysis/${props.simulationId}`);
+        // Vers l'écran de fin d'exercice (page 17) : relit des données
+        // persistées, jamais un nouvel /end.
+        router.replace(`/app/call/${props.simulationId}/done`);
       } catch {
         setEnding(false);
         setEndError(
@@ -137,15 +139,19 @@ export function RealtimeCallClient(props: Props) {
       <div className="flex items-center justify-between px-5 pt-6">
         <button
           onClick={() => setConfirmQuit(true)}
-          className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-sm text-red-300"
+          aria-label="Terminer l'appel"
+          className="min-h-11 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-sm text-red-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
         >
           Quitter
         </button>
-        <div className="text-center">
-          <p className="text-xs font-semibold tracking-[0.2em] text-violet-300">
-            DUEL EN COURS
+        <div className="min-w-0 text-center">
+          <p className="truncate text-sm font-semibold text-white">
+            {props.prospectName}
           </p>
-          <p className="text-sm text-white/60">&#9201; {formatDuration(seconds)}</p>
+          <p className="truncate text-xs text-white/45">{props.scenarioName}</p>
+          <p className="mt-0.5 text-sm text-white/60">
+            &#9201; {formatDuration(seconds)}
+          </p>
         </div>
         <span className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/60">
           {LEVEL_LABELS[props.level]}
@@ -155,8 +161,9 @@ export function RealtimeCallClient(props: Props) {
       {/* Prospect */}
       <div className="mt-6 flex flex-col items-center px-5">
         <div
+          aria-hidden="true"
           className={cx(
-            "flex h-24 w-24 items-center justify-center rounded-full border-2 text-3xl transition",
+            "flex h-24 w-24 items-center justify-center rounded-full border-2 text-2xl font-bold tracking-wide text-white transition",
             phase === "speaking"
               ? "border-flame-500/60 glow-flame animate-pulse-ring"
               : "border-violet-500/40",
@@ -166,7 +173,7 @@ export function RealtimeCallClient(props: Props) {
               "radial-gradient(circle at 50% 30%, rgba(124,58,237,0.35), rgba(10,11,26,0.6))",
           }}
         >
-          &#128100;
+          {generateInitials(props.prospectName)}
         </div>
         <p className="mt-3 text-lg font-bold">{props.prospectName}</p>
         <p className="text-xs text-white/45">
@@ -258,7 +265,9 @@ export function RealtimeCallClient(props: Props) {
         <button
           onClick={toggleMute}
           disabled={!connected}
-          className="flex flex-col items-center gap-1 disabled:opacity-40"
+          aria-label={muted ? "Réactiver le micro" : "Couper le micro"}
+          aria-pressed={muted}
+          className="flex flex-col items-center gap-1 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric-400 disabled:opacity-40"
         >
           <span
             className={cx(
@@ -276,7 +285,8 @@ export function RealtimeCallClient(props: Props) {
         </button>
         <button
           onClick={() => setConfirmQuit(true)}
-          className="flex flex-col items-center gap-1"
+          aria-label="Terminer l'appel"
+          className="flex flex-col items-center gap-1 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
         >
           <span className="flex h-14 w-14 items-center justify-center rounded-full bg-red-500 text-2xl glow-flame">
             &#128222;

@@ -120,14 +120,14 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 | **J2** | UI admin Skills (`/admin/skills`) — CRUD, blocs, publish/archive, ordre | **Livré** (lot J) |
 | **J3** | UI téléprospecteur Skills (catégories → sections → articles `PUBLISHED`) | **Livré** (lot J) |
 | **K** | Débrief en 4 onglets + liens Skills (données persistées uniquement) | **Livré** |
-| **L** | Alignement visuel Missions / appel / fin d’exercice | À venir |
+| **L** | Alignement visuel Missions / appel / fin d’exercice | **Livré** |
 | **M** | Progression avancée (Tendances, Comparatif, Diagnostic, Badges) | À venir |
 | **Ultérieur** | Upload manuel + analyse d’appels réels + écart simulé/réel (coûts IA) | Hors feuille immédiate |
 | **Reporté** | Ringover (aucune connexion, synchro, env, route, ni mention « disponible ») | Reporté |
 
 **Contenu Skills :** intégralement administrable ; **aucune donnée de production Skills n’a été créée** ni seedée.
 
-**Prochain lot recommandé :** **L** (alignement visuel Missions / appel / fin d’exercice). Lot K livré localement — non déployé.
+**Prochain lot recommandé :** **M** (Progression avancée : Tendances, Comparatif, Diagnostic, Badges). Lots K et L livrés localement — non déployés.
 
 ## Questions ouvertes (3)
 
@@ -370,3 +370,57 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 **Hors périmètre / reporté :** lot **L** (alignement visuel Missions / appel / fin d'exercice) ; Progression avancée (lot M) ; upload / appels réels / écart simulé-réel ; moyennes équipe / anonymisation ; Ringover ; déploiement Render ; commit.
 
 **Non réalisé (volontairement) :** aucune base réelle touchée ; aucun réseau / OpenAI ; aucun commit.
+
+## Lot L — Alignement visuel Missions / appel / fin d'exercice (02/08/2026)
+
+**Objectif unique :** aligner le parcours d'entraînement (Missions, appel immersif, fin d'exercice) sur la maquette V2 (pages 14–17), sans modifier le moteur de simulation, Realtime, l'évaluation ni les règles métier. Lot principalement visuel ; seule modification fonctionnelle strictement nécessaire = routage vers l'écran de fin.
+
+**Livré :**
+
+### Missions visuelles dynamiques (p.14–15)
+
+- Rendu de parcours mobile `MissionsPath` (`src/app/app/missions/MissionsPath.tsx`) : progression globale en haut, niveaux ordonnés, chemin vertical à nœuds reliés, exercice courant mis en avant (badge GO), terminé en vert, disponible en bleu/violet, verrouillé atténué avec cadenas et sans lien lançable, résultat précédent + lien débrief, CTA reprendre/commencer/refaire selon statut.
+- Données 100 % issues du moteur du lot I (`loadTeleproMissionsView` / `buildTeleproMissionsView`) : niveaux réellement présents, statuts calculés, déblocage, recommandation, trous de niveaux gérés. Aucun niveau/exercice/compteur codé en dur.
+- Helpers purs `src/lib/missionsPath.ts` (progression %, variante de nœud, garde « lançable ») — aucune règle métier dupliquée. `page.tsx` conserve `loadTeleproMissionsView` + `export default` unique et l'état vide.
+
+### Appel immersif (p.16)
+
+- Refonte visuelle de `CallClient` (DEMO) et `RealtimeCallClient` (Realtime) : en-tête compact (nom du prospect + contexte sûr + durée), avatar par initiales générées localement (`generateInitials`), statut clair (connexion/écoute/parole/pause/fin), visualiseur audio existant, transcript discret, bouton micro accessible, bouton terminer distinct **confirmé**, accents bleu/violet, état erreur lisible, focus visible, libellés a11y. Aucune tab-bar (overlay + masquage `shouldShowTeleproNav`).
+- Moteur strictement préservé : DEMO et Realtime, `useRealtimeSession` (négociation session, permissions micro, pistes, data channel), archivage transcript, garde anti double-envoi (`if (ending) return`), fin idempotente, `stop()`/cleanup au démontage, retries/erreurs, ownership télépro/org, contrats HTTP. Aucun prompt/secret supplémentaire envoyé au navigateur.
+
+### Écran de fin d'exercice et ses états (p.17)
+
+- Nouvelle route serveur `/app/call/[id]/done` (`page.tsx` + `ExerciseComplete.tsx`) réutilisant `loadDebriefForTelepro` (isolation `organizationId` + `teleproId` → 404 pour un autre). **Aucune nouvelle API.** Rechargeable : relit uniquement des données persistées et ne rappelle jamais `/end`.
+- Projection pure `buildExerciseCompleteView` (`src/lib/callUi.ts`). États :
+  - **Prête** : « Exercice terminé », score global persisté, premier point fort, premier axe, outcome, CTA `/app/analysis/[id]` + CTA Missions.
+  - **En attente / en cours** : exercice terminé confirmé, « Analyse en cours », polling **borné** (`MAX_POLLS`) et nettoyé sur l'endpoint `evaluation-status` existant, jamais de relance automatique, aucun faux score.
+  - **Échec / absente** : terminé confirmé, score non disponible, action retry existante (`retry-evaluation`) uniquement, aucun faux conseil.
+- Redirection après appel : `CallClient`/`RealtimeCallClient` naviguent vers `/app/call/[id]/done` (au lieu de l'analyse directe) après un `/end` réussi et non abandonné ; abandon → `/app` inchangé. `/end` reste appelé une seule fois ; un refresh de l'écran final ne finalise jamais à nouveau.
+
+**Invariants runtime préservés :** moteur de simulation, Realtime/WebRTC, micro, data channel, évaluation, worker, routes API de simulation, ownership et contrats HTTP — inchangés. Tab-bar masquée sur `/app/call/*` (dont `/done`), `prepare`, `analysis`.
+
+**Tests :**
+
+| Suite | Résultat |
+|-------|----------|
+| `tests/lotL.test.ts` | OK — **21** tests (Missions dynamiques + trous de niveaux + verrouillé sans lien + état vide ; invariants appel + un seul `/end` + cleanup + a11y + initiales ; fin prête/pending/échec/partiel/missing + ownership 404 + refresh sans `/end` + polling borné) |
+| Suite complète `npm test` | **375** tests passés / **24** fichiers |
+
+**Vérifications locales :**
+
+| Commande | Résultat |
+|----------|----------|
+| `npm test -- tests/lotL.test.ts` | OK — 21 / 21 |
+| `npx tsc --noEmit` | OK (EXIT 0) |
+| `npm run lint --if-present` | OK — No ESLint warnings or errors |
+| `npx prisma validate` | OK — schéma valide |
+| `npm test` | OK — 375 tests / 24 fichiers |
+| `npm run build` | OK — 33/33 pages ; route `/app/call/[id]/done` 3 kB générée |
+| `git diff --check` | OK |
+| Encodage | Nouveaux fichiers UTF-8 sans BOM + LF ; BOM pré-existant retiré de `RealtimeCallClient.tsx` |
+
+**Sécurité / contrats :** aucun `dangerouslySetInnerHTML` ; aucun import OpenAI/Ringover dans les nouveaux fichiers ; `page.tsx` (missions et done) = `export default` uniquement ; aucune fuite prompt/artifact/hash/secret.
+
+**Données :** aucune migration créée ni exécutée ; aucun changement Prisma ; aucun seed ; aucune donnée de production modifiée ; zéro OpenAI / réseau réel ; aucune simulation réelle lancée.
+
+**Non réalisé (volontairement) :** aucune base réelle touchée ; aucun réseau / OpenAI ; aucun micro / WebRTC réel ; aucun commit. Upload d'appels réels et Ringover restent hors périmètre (reportés). **Prochain lot recommandé : M.**
