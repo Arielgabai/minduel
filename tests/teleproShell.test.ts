@@ -85,10 +85,16 @@ describe("Telepro shell ? compatibilit? /app/history", () => {
 describe("Telepro shell ? Progression r?utilise l'historique", () => {
   it("Progression liste les simulations et liens d?brief", () => {
     const src = read("src/app/app/progression/page.tsx");
-    expect(src).toContain("prisma.simulation.findMany");
-    expect(src).toContain("`/app/analysis/${s.id}`");
-    expect(src).toContain("skillScore.findMany");
+    expect(src).toContain("loadProgressionForTelepro");
+    expect(src).toContain("ProgressionTabs");
     expect(src).toContain("requireTelepro");
+    const service = read("src/lib/progressionService.ts");
+    expect(service).toContain("prisma.simulation.findMany");
+    expect(service).toContain("teleproId");
+    expect(service).toContain("organizationId");
+    const tabs = read("src/app/app/progression/ProgressionTabs.tsx");
+    expect(tabs).toContain("analysisHref");
+    expect(read("src/lib/progressionView.ts")).toContain("/app/analysis/");
   });
 });
 
@@ -159,9 +165,9 @@ describe("Telepro shell ? liens pr?paration / d?brief pr?serv?s", () => {
     expect(missionsEngine).toContain("`/app/call/${activeSimulationId}`");
     expect(missionsEngine).toContain("`/app/analysis/${attempt.id}`");
     expect(read("src/app/app/missions/page.tsx")).toContain("loadTeleproMissionsView");
-    expect(read("src/app/app/progression/page.tsx")).toContain(
-      "`/app/analysis/${s.id}`",
-    );
+    expect(read("src/app/app/progression/page.tsx")).toContain("loadProgressionForTelepro");
+    expect(read("src/app/app/progression/ProgressionTabs.tsx")).toContain("analysisHref");
+    expect(read("src/lib/progressionView.ts")).toContain("/app/analysis/");
     expect(read("src/app/app/page.tsx")).toContain("loadTeleproMissionsView");
   });
 
