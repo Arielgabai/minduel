@@ -3,6 +3,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { ScenarioStatus } from "@/lib/enums";
 
+/** Normalise CRLF/CR → LF pour assertions source indépendantes de l'OS. */
+function normalizeEol(text: string): string {
+  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
 const ORG = "00000000-0000-4000-8000-000000000001";
 const OTHER_ORG = "00000000-0000-4000-8000-000000000099";
 const MANAGER_ID = "00000000-0000-4000-8000-000000000010";
@@ -745,9 +750,11 @@ describe("UI manager — archive", () => {
       /ARCHIVED[\s\S]*\?[\s\S]*["']Archivé["'][\s\S]*:[\s\S]*PUBLISHED/,
     );
 
-    const detailSrc = readFileSync(
-      path.resolve("src/app/manager/scenarios/[id]/page.tsx"),
-      "utf8",
+    const detailSrc = normalizeEol(
+      readFileSync(
+        path.resolve("src/app/manager/scenarios/[id]/page.tsx"),
+        "utf8",
+      ),
     );
     expect(detailSrc).toContain("Archivé");
     expect(detailSrc).toContain("isArchived");
