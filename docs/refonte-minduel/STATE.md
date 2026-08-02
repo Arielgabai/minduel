@@ -119,7 +119,7 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 | **J1** | Schéma / service / API Skills (contenu paramétrable, zéro OpenAI) | **Livré** (lot J) |
 | **J2** | UI admin Skills (`/admin/skills`) — CRUD, blocs, publish/archive, ordre | **Livré** (lot J) |
 | **J3** | UI téléprospecteur Skills (catégories → sections → articles `PUBLISHED`) | **Livré** (lot J) |
-| **K** | Débrief en 4 onglets + liens Skills (données persistées uniquement) | Prochain |
+| **K** | Débrief en 4 onglets + liens Skills (données persistées uniquement) | **Livré** |
 | **L** | Alignement visuel Missions / appel / fin d’exercice | À venir |
 | **M** | Progression avancée (Tendances, Comparatif, Diagnostic, Badges) | À venir |
 | **Ultérieur** | Upload manuel + analyse d’appels réels + écart simulé/réel (coûts IA) | Hors feuille immédiate |
@@ -127,7 +127,7 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 
 **Contenu Skills :** intégralement administrable ; **aucune donnée de production Skills n’a été créée** ni seedée.
 
-**Prochain lot recommandé :** **K** (débrief 4 onglets + liens Skills depuis mappings préparés). Lot J livré localement — non déployé ; migration Skills créée mais jamais exécutée.
+**Prochain lot recommandé :** **L** (alignement visuel Missions / appel / fin d’exercice). Lot K livré localement — non déployé.
 
 ## Questions ouvertes (3)
 
@@ -320,3 +320,53 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 - Exécution de la migration, seed, backfill, déploiement Render, commit.
 
 **Non réalisé (volontairement) :** aucune base réelle touchée ; migration jamais appliquée ; aucun seed Skills ; aucun réseau / OpenAI ; aucun commit.
+
+## Lot K — Débrief 4 onglets + liens Skills (02/08/2026)
+
+**Objectif unique :** remplacer le débrief monolithique par une vue à 4 onglets (Résumé, Ligne par ligne, Pourquoi, Comparatif), alimentée uniquement par les données persistées, avec liens Skills publiés issus des mappings article ↔ compétence.
+
+**Livré :**
+
+- Modèle de vue pur `src/lib/debriefView.ts` : parsing défensif des JSON persistés (`strengths` / `improvements` / `advice` / `keyMoments`), états `available` / `empty` / `unavailable`, matching moments clés exact (atMs ou extrait inclus), comparatif tentative précédente ou message « Pas assez de tentatives pour comparer », normalisation `SkillKeySchema` (lot J), tri déterministe des liens Skills.
+- Service serveur `src/lib/debriefService.ts` : `loadDebriefForTelepro` isolé par `organizationId` + `teleproId` + `simulation.id` (null → 404) ; tentative précédente COMPLETED du même scénario ; `loadPublishedSkillLinksByKeys` exige article + section + catégorie `PUBLISHED` dans la même org ; select sans corps d'article ; zéro OpenAI / recalcul / contenu fictif.
+- UI client `DebriefTabs.tsx` : 4 pilules `role=tablist` / `tab` / `tabpanel`, clavier Left/Right/Home/End, cibles tactiles `min-h-11`, focus-visible ; panneaux Résumé / Ligne / Pourquoi / Comparatif ; ScoreRing ou « Score non disponible » ; états vides DESIGN_SPEC ; CTA `/app/missions` (primaire) et `/app/progression` (ghost).
+- Page serveur `/app/analysis/[id]` : `requireTelepro` + `loadDebriefForTelepro` ; `export default` uniquement ; titre « Ton débrief détaillé » ; retour missions ; `AnalysisPending` si pending/failed/abandoned ; carte vide si missing ; `DebriefTabs` si ready.
+
+**Sources persistées par onglet :**
+
+| Onglet | Sources |
+|--------|---------|
+| Résumé | score, outcome, summary, listes JSON, betterExample, keyMoments, skillScores |
+| Ligne par ligne | `SimulationTurn` + marqueurs moments clés ; annotations structurées absentes du schéma → message explicite |
+| Pourquoi | rationale / evidence / recommendation par compétence + liens Skills mappés publiés |
+| Comparatif | dernière simulation COMPLETED antérieure (même télépro / scénario / org) ou état vide |
+
+**Liens Skills :** uniquement articles `PUBLISHED` avec parents publiés, même organisation, via `SkillArticleMapping` ; max 3 par clé ; jamais inventés.
+
+**Tests :**
+
+| Suite | Résultat |
+|-------|----------|
+| `tests/debrief.test.ts` | OK — **15** tests (parsing, 4 onglets, moments clés, comparatif, normalizeSkillKey, tri Skills, isolation, mappings PUBLISHED/DRAFT/org, assertions source) |
+| Suite complète `npm test` | **354** tests passés / **23** fichiers |
+
+**Vérifications locales :**
+
+| Commande | Résultat |
+|----------|----------|
+| `npm test -- tests/debrief.test.ts` | OK — **15** / 15 |
+| `npx tsc --noEmit` | OK |
+| `npm run lint --if-present` | OK — No ESLint warnings or errors |
+| `npx prisma validate` | OK |
+| `npm test` | OK — **354** tests / 23 fichiers |
+| `npm run build` | OK — 33/33 pages ; `/app/analysis/[id]` 6.62 kB |
+| `git diff --check` | OK |
+| Encodage | UTF-8 sans BOM + LF sur les fichiers du lot |
+
+**Sécurité / contrats :** aucun `dangerouslySetInnerHTML` ; aucun import OpenAI/Ringover dans les nouveaux modules ; `page.tsx` = `export default` uniquement ; polling existant `AnalysisPending` conservé (pas de nouveau job).
+
+**Données :** aucune migration créée ni exécutée ; aucun seed ; aucune donnée de production modifiée ; zéro OpenAI / réseau depuis la page.
+
+**Hors périmètre / reporté :** lot **L** (alignement visuel Missions / appel / fin d'exercice) ; Progression avancée (lot M) ; upload / appels réels / écart simulé-réel ; moyennes équipe / anonymisation ; Ringover ; déploiement Render ; commit.
+
+**Non réalisé (volontairement) :** aucune base réelle touchée ; aucun réseau / OpenAI ; aucun commit.
