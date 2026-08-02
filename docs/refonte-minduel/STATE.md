@@ -121,13 +121,13 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 | **J3** | UI téléprospecteur Skills (catégories → sections → articles `PUBLISHED`) | **Livré** (lot J) |
 | **K** | Débrief en 4 onglets + liens Skills (données persistées uniquement) | **Livré** |
 | **L** | Alignement visuel Missions / appel / fin d’exercice | **Livré** |
-| **M** | Progression avancée (Tendances, Comparatif, Diagnostic, Badges) | À venir |
+| **M** | Progression avancée (Tendances, Comparatif, Diagnostic, Badges) | **Livré** |
 | **Ultérieur** | Upload manuel + analyse d’appels réels + écart simulé/réel (coûts IA) | Hors feuille immédiate |
 | **Reporté** | Ringover (aucune connexion, synchro, env, route, ni mention « disponible ») | Reporté |
 
 **Contenu Skills :** intégralement administrable ; **aucune donnée de production Skills n’a été créée** ni seedée.
 
-**Prochain lot recommandé :** **M** (Progression avancée : Tendances, Comparatif, Diagnostic, Badges). Lots K et L livrés localement — non déployés.
+**Prochain lot recommandé :** gate de release et smoke tests. Lots K, L et M livrés localement — non déployés.
 
 ## Questions ouvertes (3)
 
@@ -423,4 +423,55 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 
 **Données :** aucune migration créée ni exécutée ; aucun changement Prisma ; aucun seed ; aucune donnée de production modifiée ; zéro OpenAI / réseau réel ; aucune simulation réelle lancée.
 
-**Non réalisé (volontairement) :** aucune base réelle touchée ; aucun réseau / OpenAI ; aucun micro / WebRTC réel ; aucun commit. Upload d'appels réels et Ringover restent hors périmètre (reportés). **Prochain lot recommandé : M.**
+**Non réalisé (volontairement) :** aucune base réelle touchée ; aucun réseau / OpenAI ; aucun micro / WebRTC réel ; aucun commit. Upload d'appels réels et Ringover restent hors périmètre (reportés). **Prochain étape :** gate de release et smoke tests.
+
+
+## Lot M — Progression avancée : Tendances, Comparatif, Diagnostic, Badges (02/08/2026)
+
+**Objectif unique :** remplacer `/app/progression` par le tableau de progression mobile (maquette p.38–41) à partir des simulations et évaluations réellement persistées.
+
+**Livré :**
+
+- Moteur pur `src/lib/progressionView.ts` : définitions tentatives terminée / évaluée / comparable ; tendances ; comparatif personnel ; diagnostic statistique ; badges dérivés.
+- Service `src/lib/progressionService.ts` : `teleproId` + `organizationId` explicites ; compteurs `count` séparés ; `findMany` limité à `MAX_DETAILED_ATTEMPTS` (120) ; select minimal ; liens Skills via `loadPublishedSkillLinksByKeys` (lot K).
+- UI `ProgressionTabs.tsx` + page `/app/progression` : 4 onglets pilules (ARIA/clavier), graphique SVG/CSS sans dépendance, cartes Diagnostic, grille badges.
+- Tests `tests/progression.test.ts` ; assertions lot H mises à jour dans `tests/teleproShell.test.ts` (compat page M).
+
+**Sources et calculs des 4 vues :**
+
+| Vue | Sources | Calculs |
+|-----|---------|---------|
+| Tendances | Tentatives `FINISHED_*` + `SimulationEvaluation.overallScore` | Compteurs terminées/évaluées ; moyenne / meilleur / dernier ; courbe chronologique ; historique récent → `/app/analysis/[id]` |
+| Comparatif | Dernière + précédente évaluées (même scénario prioritaire, sinon globale libellée) | Delta score global + compétences à clé normalisée commune ; **aucune moyenne équipe** |
+| Diagnostic | `SkillScore` persistés (`score/maxScore` si `maxScore > 0`) | Moyenne % par clé ; n observations ; plus solide / priorité si `n >= 2` ; liens Skills PUBLISHED |
+| Badges | Historique évalué uniquement | Config pure (`BADGE_THRESHOLDS`) ; état gagné/verrouillé + progression + date déterministe ; **non persistés** |
+
+**Définitions :**
+
+1. Tentative terminée = statut dans `FINISHED_SIMULATION_STATUSES` (lot I).
+2. Tentative évaluée = terminée + ligne `evaluation` avec `overallScore` fini.
+3. Tentative comparable = évaluée (paire dernière/précédente).
+4. Compétence comparable = même clé `normalizeSkillKey` avec `maxScore > 0` des deux côtés.
+
+**Badges (seuils centralisés) :** première évaluation (1) ; 5 évaluations ; score ≥ 80 ; 3 améliorations successives ; 3 jours distincts.
+
+**Comparatif équipe :** non implémenté (seuil d’anonymisation DESIGN_SPEC non tranché) — message personnel uniquement.
+
+**Vérifications locales :**
+
+| Commande | Résultat |
+|----------|----------|
+| `npm test -- tests/progression.test.ts` | OK — **19** tests |
+| `npx tsc --noEmit` | OK (EXIT 0) |
+| `npm run lint --if-present` | OK — No ESLint warnings or errors |
+| `npx prisma validate` | OK — schéma valide |
+| `npm test` | OK — **394** tests / 25 fichiers |
+| `npm run build` | OK — 33/33 pages ; `/app/progression` 3.23 kB |
+| `git diff --check` | OK |
+| Encodage | UTF-8 sans BOM + LF (mécanisme Python après échec UTF-16 de l’éditeur) |
+
+**Données :** aucune migration ; aucun seed ; aucune donnée de production ; zéro OpenAI / réseau ; badges non persistés.
+
+**Hors périmètre / reporté :** moyenne équipe ; upload / appels réels ; Ringover ; administration des badges ; commit.
+
+**Prochaine étape :** gate de release et smoke tests.
