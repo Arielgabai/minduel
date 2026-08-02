@@ -1,6 +1,6 @@
 # État refonte Minduel
 
-**Dernière mise à jour :** 31/07/2026
+**Dernière mise à jour :** 02/08/2026
 
 ## Statut des documents
 
@@ -114,7 +114,7 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 
 ## Prochain lot recommandé
 
-**Gate local vert (R-FIX).** Production conditionnelle : inspecter le dashboard Render, choisir stratégie A/B/C du runbook, remplacer `<commit-r-fix>` après commit/push, sauvegarder la DB avant toute commande prod. Aucune migration/backfill/déploiement effectué.
+**Lot H (shell télépro) livré localement — non déployé.** Prochain : lot Missions dynamiques (niveaux, verrous, recommandation). Production shell : commit/push puis déploiement Render selon runbook, sans migration.
 
 ## Questions ouvertes (3)
 
@@ -150,3 +150,37 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 - Tests `tests/adminExercisesUi.test.ts`.
 
 **Hors périmètre :** migration, seed, backfill, OpenAI, changement Prisma/métier.
+
+## Lot H / Lot 8 — Shell téléprospecteur et navigation (02/08/2026)
+
+**Objectif :** remplacer la navigation téléprospecteur (3 onglets) par le shell partagé 5 destinations (DESIGN_SPEC), sans logique métier Missions dynamiques.
+
+**Livré :**
+
+- Helpers purs `src/lib/teleproNav.ts` (items, état actif, masquage tab-bar, redirect historique).
+- `TeleproShell` : cadre `max-w-[480px]`, bordure/radius desktop, `main`, `overflow-x-hidden`, tab-bar **dans** le cadre.
+- `TeleproNav` : Accueil, Missions, Skills, Progression, Profil ; `aria-current="page"` ; cibles `min-h-11` ; sticky bottom (plus de nav pleine largeur viewport).
+- Routes : `/app/missions`, `/app/skills`, `/app/progression` ; `/app/history` → redirect `/app/progression`.
+- Tab-bar masquée sur `/app/prepare/*`, `/app/call/*`, `/app/analysis/*` (parcours immersifs ; retours existants conservés).
+- Skills : état vide explicite, **aucune** donnée fictive.
+- Progression : réutilise la consultation historique (simulations + skillScore), liens débrief `/app/analysis/[id]`.
+- Auth layout inchangée (`getCurrentUser` / `isTelepro` / redirect login|manager) ; pages métiers gardent `requireTelepro`.
+
+**Reporté au lot Missions dynamiques :**
+
+- Carte de niveaux / verrouillage / recommandation prochain exercice.
+- Statuts métier terminé / en cours / disponible / verrouillé calculés.
+- Contenu Skills (catégories, articles, scores).
+- Analytics Progression (Tendances, Comparatif, Diagnostic, Badges) au-delà de l'historique existant.
+
+**Vérifications locales :**
+
+| Commande | Résultat |
+|----------|----------|
+| `npm test` | **260 passés / 261** (18 fichiers) — `tests/teleproShell.test.ts` **15/15 OK** ; 1 échec **préexistant** hors lot : `tests/scenarioArchive.test.ts` (regex LF vs CRLF checkout Windows sur page manager non modifiée) |
+| `npx tsc --noEmit` | OK (EXIT 0, ~22 s) |
+| `npm run lint --if-present` | OK — No ESLint warnings or errors (~24 s) |
+| `npm run build` | OK — routes `/app/missions`, `/app/skills`, `/app/progression` générées (~78 s) |
+| `git diff --check` | OK |
+
+**Non réalisé :** aucun déploiement, migration, seed, backfill, OpenAI, micro, upload, ni commit.

@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { getCurrentUser, isTelepro } from "@/lib/auth";
 import { isDemoMode } from "@/lib/config";
 import { DemoBanner } from "@/components/DemoBanner";
-import { TeleproNav } from "@/components/TeleproNav";
+import { TeleproShell } from "@/components/TeleproShell";
 
 export default async function TeleproLayout({
   children,
@@ -14,10 +14,8 @@ export default async function TeleproLayout({
   if (!isTelepro(user)) redirect("/manager");
 
   return (
-    <div className="min-h-screen pb-24">
-      <DemoBanner show={isDemoMode()} />
-      <div className="mx-auto max-w-md px-5 pt-6">{children}</div>
-      <TeleproNav />
-    </div>
+    <TeleproShell demoBanner={<DemoBanner show={isDemoMode()} />}>
+      {children}
+    </TeleproShell>
   );
 }
