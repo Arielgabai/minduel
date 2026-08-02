@@ -11,7 +11,7 @@
 | Plan admin exercices | `docs/refonte-minduel/02-PLAN_ADMIN_EXERCICES.md` | Validé §12 |
 | Audit terrain Ruben | `docs/refonte-minduel/references/audit_minduel_ruben_2026-07-29.md` | Disponible |
 | Maquette HTML | `docs/refonte-minduel/references/minduel webapp mvp.html` | Référence UX (non prod) |
-| Release runbook | `docs/refonte-minduel/RELEASE_RUNBOOK.md` | LOT R-DOCFIX — **GO local / prod conditionnelle** |
+| Release runbook | `docs/refonte-minduel/RELEASE_RUNBOOK.md` | LOT RELEASE V2 — **GO local / GO production conditionnel** |
 
 ## Stack confirmée (une ligne)
 
@@ -475,3 +475,62 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 **Hors périmètre / reporté :** moyenne équipe ; upload / appels réels ; Ringover ; administration des badges ; commit.
 
 **Prochaine étape :** gate de release et smoke tests.
+
+## LOT RELEASE V2 — Gate final et procédure Render (02/08/2026)
+
+**Objectif unique :** déterminer si le MVP Minduel V2 est déployable sur Render et actualiser la procédure de production. **Audit et documentation uniquement** — aucun fichier applicatif modifié.
+
+### Décision
+
+**GO local — GO production conditionnel** aux vérifications manuelles du dashboard Render et aux points d'arrêt du runbook.
+
+### Cible et delta
+
+| Élément | Valeur |
+|---------|--------|
+| Commit cible | `9d9b38bc1293c2f5d2171ba1b632fb8b5e61919c` |
+| Commit production précédent (**à revérifier dans Render**) | `ae61df7db304e51cfc19df86d4959bd6a8f7d262` |
+| Branche locale du gate | `release/minduel-mvp-v2` — **aucun upstream configuré** |
+| `main` / `minduel/main` | Même SHA que la cible (0 commit d'écart) |
+| Delta | 14 commits, 50 fichiers (+13 340 / −485) |
+| Lots inclus | H, I, J0, J, K, L, M — tous présents et vérifiés |
+| Migrations ajoutées | 1 — `20260802100000_skills_library` |
+| `package.json` / lockfile / `Dockerfile` / `next.config.ts` / `src/lib/env.ts` | **Inchangés** |
+| Fichiers suivis modifiés / patchs ou scripts dans le commit / secrets suivis | Aucun |
+
+### Vérifications locales (résultats exacts)
+
+| Commande | Résultat | Durée approx. |
+|----------|----------|---------------|
+| `npm test` | OK — **394 tests / 25 fichiers** (réseau intégralement stubbé) | ~19 s |
+| `npx tsc --noEmit` | OK (exit 0) | ~14 s |
+| `npm run lint --if-present` | OK — No ESLint warnings or errors | ~17 s |
+| `npx prisma validate` | OK — schéma valide | ~10 s |
+| `npm run build` | OK (exit 0) — **33/33 pages générées** | ~65 s |
+| `git diff --check` | OK | — |
+
+Baseline attendue (394 tests / 25 fichiers / 33 pages) **confirmée sans forçage**.
+
+### Migration Skills
+
+**Toujours non exécutée** : ni `migrate dev`, ni `migrate deploy`, ni `db push`, sur aucune base.
+
+Additive uniquement (4 tables neuves, zéro `ALTER` sur une table existante, zéro donnée) ; concordance complète avec `schema.prisma` ; index et uniques nommés ; FK composites multi-tenant ; `ON DELETE` cohérents (`CASCADE` vers `Organization` et mapping→article, `RESTRICT` sur les parents catalogue) ; ordre tables → index → FK correct ; identifiant le plus long **53 octets** ≤ 63 ; rollback manuel documenté en en-tête ; aucune migration historique modifiée ; **aucun backfill Skills nécessaire**.
+
+### Risques et conditions Render
+
+* La branche locale du gate n'a pas d'upstream ; Render suit `main`, qui pointe actuellement sur le même SHA — **à reconfirmer dans le dashboard**.
+* Le **Pre-Deploy réel** de chaque service doit être confirmé dans l'UI : sans lui, la migration ne serait pas appliquée.
+* Le **nouveau web exige les tables Skills** dès qu'il sert du trafic (`/app/skills`, `/admin/skills`, débrief, progression) ; l'**ancien web les ignore** et le **worker n'en dépend pas** pour démarrer.
+* Ordre recommandé : **worker seul d'abord** (son Pre-Deploy applique la migration pendant que l'ancien web reste actif), puis le web sur le même commit. Jamais les deux simultanément.
+* STOP si : Pre-Deploy non confirmé, commit déployé différent de la cible, export PostgreSQL non terminé, flag ops à `true`, auto-deploy resté ON, drift de migration.
+* Aucune nouvelle variable d'environnement pour Skills / lots H–M ; flags ops attendus absents ou `false` ; aucun seed ; aucun `--apply`.
+* Tester la visibilité d'un article `PUBLISHED` écrit de la donnée réelle : décision manuelle écrite exigée (§E.3 du runbook), sinon test limité à l'état vide.
+
+**Runbook :** `docs/refonte-minduel/RELEASE_RUNBOOK.md` (préconditions, gate dashboard, commandes à ne pas exécuter, déploiement séquentiel, smoke sans OpenAI, rollback, GO/NO-GO, matrice de variables).
+
+**Fichiers touchés par ce lot :** `docs/refonte-minduel/RELEASE_RUNBOOK.md`, `docs/refonte-minduel/STATE.md` uniquement.
+
+**Non réalisé (volontairement) :** **aucun déploiement Render n'a été effectué**, aucune migration, aucun seed, aucun backfill, aucune promotion, aucune base touchée, aucune application ni simulation lancée, aucun appel OpenAI ou réseau externe, aucune modification de `.env`, aucune dépendance ajoutée, aucun stage / commit / push.
+
+**Prochaine action :** remplir le gate dashboard Render (§B), réaliser un export PostgreSQL frais, puis dérouler §D.3 (worker seul, puis web).
