@@ -154,13 +154,15 @@ describe("Telepro shell ? Skills sans donn?es fictives", () => {
 
 describe("Telepro shell ? liens pr?paration / d?brief pr?serv?s", () => {
   it("Missions lien vers prepare ; Progression vers analysis", () => {
-    expect(read("src/app/app/missions/page.tsx")).toContain(
-      "`/app/prepare/${a.scenarioId}`",
-    );
+    const missionsEngine = read("src/lib/teleproMissions.ts");
+    expect(missionsEngine).toContain("`/app/prepare/${exerciseId}`");
+    expect(missionsEngine).toContain("`/app/call/${activeSimulationId}`");
+    expect(missionsEngine).toContain("`/app/analysis/${attempt.id}`");
+    expect(read("src/app/app/missions/page.tsx")).toContain("loadTeleproMissionsView");
     expect(read("src/app/app/progression/page.tsx")).toContain(
       "`/app/analysis/${s.id}`",
     );
-    expect(read("src/app/app/page.tsx")).toContain("/app/prepare/");
+    expect(read("src/app/app/page.tsx")).toContain("loadTeleproMissionsView");
   });
 
   it("masque la tab-bar sur prepare/call/analysis", () => {
