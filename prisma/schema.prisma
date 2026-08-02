@@ -41,6 +41,11 @@ model Organization {
   callAnalyses   CallAnalysis[]
   promptBundles  PromptBundle[]
 
+  skillCategories      SkillCategory[]
+  skillSections        SkillSection[]
+  skillArticles        SkillArticle[]
+  skillArticleMappings SkillArticleMapping[]
+
   @@index([slug])
 }
 
@@ -455,6 +460,119 @@ model SkillScore {
   evaluation SimulationEvaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
 
   @@index([evaluationId])
+}
+
+// ---------------------------------------------------------------------------
+// Bibliothèque Skills (catalogue pédagogique administrable, lot J).
+// Hiérarchie : SkillCategory → SkillSection → SkillArticle.
+// Statuts applicatifs : DRAFT | PUBLISHED | ARCHIVED (voir src/lib/skillsContent.ts).
+// Le contenu des articles est un JSON de blocs strictement validés côté serveur
+// (jamais de HTML arbitraire). Distinct de SkillScore (scores d'évaluation).
+// ---------------------------------------------------------------------------
+
+model SkillCategory {
+  id             String  @id @default(uuid())
+  organizationId String
+  name           String
+  slug           String
+  description    String?
+  // Clé d'icône contrôlée (liste fermée applicative, jamais de SVG arbitraire)
+  iconKey        String  @default("book")
+  sortOrder      Int     @default(0)
+  status         String  @default("DRAFT") // DRAFT | PUBLISHED | ARCHIVED
+  createdById    String?
+  createdAt      String
+  updatedAt      String
+  publishedAt    String?
+  archivedAt     String?
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sections     SkillSection[]
+  articles     SkillArticle[]
+
+  @@unique([organizationId, slug])
+  // Ancre FK composite : empêche une section/article d'une autre org
+  @@unique([id, organizationId])
+  @@index([organizationId, status, sortOrder])
+}
+
+model SkillSection {
+  id             String  @id @default(uuid())
+  organizationId String
+  categoryId     String
+  name           String
+  slug           String
+  description    String?
+  sortOrder      Int     @default(0)
+  status         String  @default("DRAFT") // DRAFT | PUBLISHED | ARCHIVED
+  createdById    String?
+  createdAt      String
+  updatedAt      String
+  publishedAt    String?
+  archivedAt     String?
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // FK composite : section.organizationId === category.organizationId
+  category     SkillCategory  @relation(fields: [categoryId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  articles     SkillArticle[]
+
+  @@unique([categoryId, slug])
+  @@unique([id, organizationId])
+  // Ancre FK article → section + catégorie + org (article.categoryId === section.categoryId)
+  @@unique([id, organizationId, categoryId])
+  @@index([organizationId])
+  @@index([categoryId, status, sortOrder])
+}
+
+model SkillArticle {
+  id             String  @id @default(uuid())
+  organizationId String
+  categoryId     String
+  sectionId      String
+  title          String
+  slug           String
+  summary        String?
+  // JSON string[] (libellés courts, validés côté serveur)
+  tags           String?
+  readingMinutes Int     @default(3)
+  sortOrder      Int     @default(0)
+  status         String  @default("DRAFT") // DRAFT | PUBLISHED | ARCHIVED
+  // JSON : blocs de contenu structurés, validés par SkillArticleContentSchema
+  content        String
+  createdById    String?
+  createdAt      String
+  updatedAt      String
+  publishedAt    String?
+  archivedAt     String?
+
+  organization  Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // FK composites : même organisation que catégorie et section ; catégorie = section.categoryId
+  category      SkillCategory         @relation(fields: [categoryId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  section       SkillSection          @relation(fields: [sectionId, organizationId, categoryId], references: [id, organizationId, categoryId], onDelete: Restrict)
+  skillMappings SkillArticleMapping[]
+
+  @@unique([organizationId, slug])
+  @@unique([id, organizationId])
+  @@index([organizationId, status])
+  @@index([sectionId, status, sortOrder])
+  @@index([categoryId])
+}
+
+// Mapping normalisé article ↔ clé de compétence (SkillScore.key / rubriques).
+// Permet de retrouver les articles publiés associés à un axe de compétence.
+model SkillArticleMapping {
+  id             String @id @default(uuid())
+  organizationId String
+  articleId      String
+  skillKey       String
+  createdAt      String
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // FK composite : mapping.organizationId === article.organizationId
+  article      SkillArticle @relation(fields: [articleId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@unique([articleId, skillKey])
+  @@index([organizationId, skillKey])
 }
 
 model AuditEvent {

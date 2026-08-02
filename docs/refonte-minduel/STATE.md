@@ -114,20 +114,20 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 
 ## Feuille de route post-J0
 
-| Lot | Objectif |
-|-----|----------|
-| **J1** | Schéma / service / API Skills (contenu paramétrable, zéro OpenAI) |
-| **J2** | UI admin Skills (`/admin`) — CRUD, aperçu, publish/archive, ordre |
-| **J3** | UI téléprospecteur Skills (catégories → sections → articles `PUBLISHED`) |
-| **K** | Débrief en 4 onglets + liens Skills (données persistées uniquement) |
-| **L** | Alignement visuel Missions / appel / fin d’exercice |
-| **M** | Progression avancée (Tendances, Comparatif, Diagnostic, Badges) |
-| **Ultérieur** | Upload manuel + analyse d’appels réels + écart simulé/réel (coûts IA) |
-| **Reporté** | Ringover (aucune connexion, synchro, env, route, ni mention « disponible ») |
+| Lot | Objectif | Statut |
+|-----|----------|--------|
+| **J1** | Schéma / service / API Skills (contenu paramétrable, zéro OpenAI) | **Livré** (lot J) |
+| **J2** | UI admin Skills (`/admin/skills`) — CRUD, blocs, publish/archive, ordre | **Livré** (lot J) |
+| **J3** | UI téléprospecteur Skills (catégories → sections → articles `PUBLISHED`) | **Livré** (lot J) |
+| **K** | Débrief en 4 onglets + liens Skills (données persistées uniquement) | Prochain |
+| **L** | Alignement visuel Missions / appel / fin d’exercice | À venir |
+| **M** | Progression avancée (Tendances, Comparatif, Diagnostic, Badges) | À venir |
+| **Ultérieur** | Upload manuel + analyse d’appels réels + écart simulé/réel (coûts IA) | Hors feuille immédiate |
+| **Reporté** | Ringover (aucune connexion, synchro, env, route, ni mention « disponible ») | Reporté |
 
-**Contenu Skills :** intégralement administrable ; **aucune donnée de production Skills n’a été créée** (J0 documentaire uniquement).
+**Contenu Skills :** intégralement administrable ; **aucune donnée de production Skills n’a été créée** ni seedée.
 
-**Prochain lot recommandé :** **J1** (schéma/service/API Skills). Lot I livré localement — non déployé. Production app : commit/push puis Render selon runbook, sans migration liée à J0.
+**Prochain lot recommandé :** **K** (débrief 4 onglets + liens Skills depuis mappings préparés). Lot J livré localement — non déployé ; migration Skills créée mais jamais exécutée.
 
 ## Questions ouvertes (3)
 
@@ -260,3 +260,63 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 **Vérifications :** `git diff --check` ; UTF-8 sans BOM ; fins de ligne LF.
 
 **Non réalisé :** aucun code applicatif, dépendance, migration, seed, base, réseau, OpenAI, upload, ni commit.
+
+## Lot J — Skills MVP end-to-end (J1 + J2 + J3) (02/08/2026)
+
+**Objectif unique :** livrer la bibliothèque Skills complète du MVP — administrable par `PLATFORM_ADMIN`, consultable par les télépros — conformément à `DESIGN_SPEC.md` (pages maquette 22–31).
+
+**Livré :**
+
+### J1 — Modèle, service et API
+
+- Migration additive `prisma/migrations/20260802100000_skills_library/migration.sql` : tables `SkillCategory`, `SkillSection`, `SkillArticle`, `SkillArticleMapping` ; index et contraintes d’unicité par organisation ; **FK composites multi-tenant** (`categoryId+organizationId`, `sectionId+organizationId+categoryId`, `articleId+organizationId`) pour interdire toute relation croisée entre organisations ; rollback manuel documenté en en-tête. **Créée, jamais exécutée** (ni `migrate dev`, ni `deploy`, ni `db push`).
+- Schéma Prisma : catalogue **Catégorie → Section → Article** ; distinct de `SkillScore` (scores d’évaluation) ; ancres `@@unique([id, organizationId])` (et section `@@unique([id, organizationId, categoryId])`).
+- Contenu article : blocs JSON strictement validés (`src/lib/skillsContent.ts`) — `heading`, `paragraph`, `list`, `callout`, `example`, `keyIdea` ; rejet HTML/script/propriétés inconnues/URL exécutables ; tailles maximales.
+- Mappings normalisés article ↔ clés de compétences (`SkillArticleMapping`) pour exploitation future par le débrief (lot K) — **non branchés au débrief dans ce lot**.
+- Service admin `src/lib/skillsAdminService.ts` : arbre sans corps, détail, CRUD DRAFT, publish/unpublish/archive, hard-delete DRAFT non référencé, ordre, mappings (remplacement / vide), audit sans corps ni blocs.
+- API `GET|POST /api/admin/skills` et `GET|PATCH|DELETE|POST /api/admin/skills/[id]` ; contrat `entity` = `category` | `section` | `article` ; actions POST `publish` | `unpublish` | `archive` ; `requirePlatformAdmin()` strict ; isolation `organizationId` ; enveloppes `{ data }` / `{ error }` ; 409 sur conflits.
+
+### J2 — Interface admin
+
+- Destination `/admin/skills` + lien dans le shell admin (`src/app/admin/layout.tsx`).
+- Arbre Catégories → Sections → Articles ; création / édition / blocs structurés / tags / durée / mappings ; publish / unpublish / archive / delete avec confirmation ; ARCHIVED en lecture seule ; pas de faux succès sur `!res.ok` ; helpers purs dans `src/lib/adminSkillsUi.ts` (pages = `export default` uniquement).
+
+### J3 — Bibliothèque télépro
+
+- Service `src/lib/skillsTeleproService.ts` : `teleproId` + `organizationId` explicites ; uniquement hiérarchie entièrement `PUBLISHED` ; selects minimaux ; ordre `sortOrder` puis titre ; compteurs et recherche sur titres/résumés/tags publics.
+- Routes : `/app/skills`, `/app/skills/[categorySlug]`, `/app/skills/[categorySlug]/[articleSlug]` ; rendu React des blocs (`SkillBlocks.tsx`) — jamais `dangerouslySetInnerHTML` ; 404 si slug masqué / hors org ; shell 5 destinations (lot H) inchangé.
+- Direction visuelle : fond quasi noir, cartes sombres, accents bleu/violet/orange, état vide propre si aucun contenu publié ; aucun chiffre de maquette hardcodé.
+
+**Cycle de vie :** DRAFT modifiable ; PUBLISHED visible selon ascendance ; ARCHIVED masqué et lecture seule ; republier un article exige catégorie + section publiées + ≥1 bloc valide ; dépublier/archiver un parent masque les descendants sans réécrire leur statut ; hard-delete DRAFT uniquement (catégorie sans section, section sans article, article + mappings).
+
+**Sécurité :** anonyme / TELEPRO / MANAGER refusés sur l’API admin ; isolation organisation sur chaque lecture/écriture ; listes sans blocs ; détail blocs réservé admin ; aucun prompt / artifact / hash / secret dans les sélections télépro ; aucune dépendance ajoutée ; zéro OpenAI ; zéro Ringover ; **aucune donnée Skills créée ou seedée**.
+
+**Tests :**
+
+| Suite | Résultat |
+|-------|----------|
+| `tests/skillsAdmin.test.ts` | OK — **22** tests (auth, isolation, CRUD, blocs, cycle de vie, 409, mappings, audit, syntaxe SQL / FK composites) |
+| `tests/skillsTelepro.test.ts` | OK — 14 tests (visibilité PUBLISHED, ordre, compteurs, recherche, 404, rendu sûr, shell H) |
+| `tests/adminSkillsUi.test.ts` | OK — 17 tests (helpers purs + assertions source `!res.ok` / exports / tableaux vides) |
+| Suite complète `npm test` | **339** tests passés / **22** fichiers |
+
+**Vérifications locales :**
+
+| Commande | Résultat |
+|----------|----------|
+| `npm test --` (tests Skills ciblés) | OK — **53** tests / 3 fichiers |
+| `npx tsc --noEmit` | OK |
+| `npm run lint --if-present` | OK — No ESLint warnings or errors |
+| `npx prisma validate` | OK |
+| `npm run build` | OK — 33/33 pages générées |
+| `git diff --check` | OK |
+| Encodage | UTF-8 sans BOM + LF sur les fichiers du lot |
+
+**Reporté / hors périmètre :**
+
+- Intégration des mappings Skills dans le débrief (lot **K**).
+- Upload manuel + analyse d’appels réels (ultérieur).
+- Ringover (reporté — aucune connexion, synchro, env, route, ni mention « disponible »).
+- Exécution de la migration, seed, backfill, déploiement Render, commit.
+
+**Non réalisé (volontairement) :** aucune base réelle touchée ; migration jamais appliquée ; aucun seed Skills ; aucun réseau / OpenAI ; aucun commit.
