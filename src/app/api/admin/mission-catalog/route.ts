@@ -11,7 +11,7 @@ const EntitySchema = z.object({
   entity: z.enum(["theme", "stage"]),
 });
 
-/** Arbre Thèmes → phases (aucun contenu d'exercice, aucun prompt). */
+/** Arbre Thèmes → niveaux (aucun contenu d'exercice, aucun prompt). */
 export async function GET() {
   return handle(async () => {
     const admin = await requirePlatformAdmin();

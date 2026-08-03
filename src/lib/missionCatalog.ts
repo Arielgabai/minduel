@@ -1,7 +1,8 @@
 /**
- * Contrat partagé du catalogue Missions (client + serveur), lot N1.
+ * Contrat partagé du catalogue Missions (client + serveur), lots N1/N4.
  *
- * Hiérarchie : Thème → phase/niveau → ordre → exercices.
+ * Hiérarchie : Thème → niveaux (un exercice = un niveau).
+ * MissionStage reste le modèle technique du niveau.
  * Ce module est un domaine pur : aucune dépendance Prisma, aucun accès réseau,
  * aucun composant React. Il est importable depuis les pages admin comme depuis
  * les services serveur.
@@ -106,22 +107,34 @@ export const MissionThemeCreateSchema = z
 
 export const MissionThemeUpdateSchema = MissionThemeCreateSchema.partial().strict();
 
+/** Aucun plafond métier de niveaux : seule une borne de validation raisonnable. */
 export const MissionStageCreateSchema = z
   .object({
     themeId: z.string().min(1).max(64),
     name: safeMissionText(120, 2),
     slug: MissionSlugSchema.optional(),
     description: safeMissionText(500, 0).nullish(),
-    levelNumber: z.number().int().min(1).max(99).default(1),
-    sortOrder: z.number().int().min(0).max(999).default(0),
+    // Optionnel : le service propose le prochain numéro (aucun plafond métier).
+    levelNumber: z.number().int().min(1).max(9999).optional(),
+    sortOrder: z.number().int().min(0).max(9999).default(0),
   })
   .strict();
 
 /** Le thème parent n'est jamais déplaçable après création (isolation simple). */
-export const MissionStageUpdateSchema = MissionStageCreateSchema.omit({
-  themeId: true,
-})
-  .partial()
+export const MissionStageUpdateSchema = z
+  .object({
+    name: safeMissionText(120, 2).optional(),
+    slug: MissionSlugSchema.optional(),
+    description: safeMissionText(500, 0).nullish(),
+    levelNumber: z.number().int().min(1).max(9999).optional(),
+    sortOrder: z.number().int().min(0).max(9999).optional(),
+  })
+  .strict();
+
+export const MissionStageAssignExerciseSchema = z
+  .object({
+    exerciseId: z.string().min(1).max(64),
+  })
   .strict();
 
 /**
@@ -136,9 +149,36 @@ export const ProspectAvatarKeySchema = z.string().refine(isProspectAvatarKey, {
 
 export type MissionEntityKind = "theme" | "stage";
 
-export type MissionCatalogAction = "publish" | "unpublish" | "archive";
+export type MissionCatalogAction =
+  | "publish"
+  | "unpublish"
+  | "archive"
+  | "assignExercise"
+  | "unassignExercise";
 
 // ---------------- Vues (arbre admin) ----------------
+
+/** Résumé sûr d'un exercice classé dans un niveau (jamais de prompt/hash). */
+export type MissionStageExerciseSummary = {
+  id: string;
+  name: string;
+  status: string;
+  prospectAvatarKey: string | null;
+  hasPersonality: boolean;
+  hasPublishedPrompt: boolean;
+};
+
+/** Checklist de préparation d'un niveau (affichage admin uniquement). */
+export type MissionLevelReadiness = {
+  hasExercise: boolean;
+  exercisePublished: boolean;
+  hasAvatar: boolean;
+  hasPersonality: boolean;
+  hasPublishedPrompt: boolean;
+  themePublished: boolean;
+  readyToPublish: boolean;
+  missing: string[];
+};
 
 export type MissionStageNode = {
   id: string;
@@ -151,8 +191,10 @@ export type MissionStageNode = {
   status: string;
   createdAt: string;
   updatedAt: string;
-  /** Nombre d'exercices classés dans cette phase (jamais de contenu d'exercice). */
+  /** 0 ou 1 : un niveau = au plus un exercice. */
   exerciseCount: number;
+  exercise: MissionStageExerciseSummary | null;
+  readiness: MissionLevelReadiness;
 };
 
 export type MissionThemeNode = {
@@ -170,7 +212,7 @@ export type MissionThemeNode = {
 
 // ---------------- Classement des exercices ----------------
 
-/** Valeur de filtre « Non classé » (exercices sans phase). */
+/** Valeur de filtre « Non classé » (exercices sans niveau). */
 export const MISSION_UNCLASSIFIED = "none";
 
 export const UNCLASSIFIED_LABEL = "Non classé";
@@ -194,14 +236,66 @@ export function sortMissionThemes<T extends { sortOrder: number; name: string }>
   );
 }
 
-/** Tri stable des phases : ordre explicite, puis niveau, puis nom. */
+/** Tri stable des niveaux : levelNumber, puis ordre, puis nom. */
 export function sortMissionStages<
   T extends { sortOrder: number; levelNumber: number; name: string },
 >(items: T[]): T[] {
   return [...items].sort(
     (a, b) =>
-      a.sortOrder - b.sortOrder ||
       a.levelNumber - b.levelNumber ||
+      a.sortOrder - b.sortOrder ||
       a.name.localeCompare(b.name, "fr"),
   );
+}
+
+/**
+ * Prochain numéro de niveau libre dans un thème (trous ignorés pour la suggestion).
+ * Aucun plafond métier : l'administrateur peut dépasser 7, 10, etc.
+ */
+export function suggestNextLevelNumber(
+  stages: readonly { levelNumber: number }[],
+): number {
+  if (stages.length === 0) return 1;
+  let max = 0;
+  for (const stage of stages) {
+    if (stage.levelNumber > max) max = stage.levelNumber;
+  }
+  return max + 1;
+}
+
+/** Construit la checklist de préparation d'un niveau (sans secrets). */
+export function buildMissionLevelReadiness(input: {
+  themeStatus: string;
+  exercise: MissionStageExerciseSummary | null;
+}): MissionLevelReadiness {
+  const exercise = input.exercise;
+  const hasExercise = Boolean(exercise);
+  const exercisePublished = exercise?.status === "PUBLISHED";
+  const hasAvatar = Boolean(
+    exercise?.prospectAvatarKey && isProspectAvatarKey(exercise.prospectAvatarKey),
+  );
+  const hasPersonality = Boolean(exercise?.hasPersonality);
+  const hasPublishedPrompt = Boolean(exercise?.hasPublishedPrompt);
+  const themePublished = input.themeStatus === MissionStatus.PUBLISHED;
+
+  const missing: string[] = [];
+  if (!themePublished) missing.push("Thème non publié");
+  if (!hasExercise) missing.push("Aucun exercice associé");
+  else {
+    if (!exercisePublished) missing.push("Exercice non publié");
+    if (!hasAvatar) missing.push("Avatar manquant ou invalide");
+    if (!hasPersonality) missing.push("Personnalité / consigne d'incarnation vide");
+    if (!hasPublishedPrompt) missing.push("PromptBundle publié courant manquant");
+  }
+
+  return {
+    hasExercise,
+    exercisePublished,
+    hasAvatar,
+    hasPersonality,
+    hasPublishedPrompt,
+    themePublished,
+    readyToPublish: missing.length === 0,
+    missing,
+  };
 }

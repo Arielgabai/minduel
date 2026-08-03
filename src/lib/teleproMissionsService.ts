@@ -2,11 +2,13 @@ import "server-only";
 
 import { prisma } from "@/lib/db";
 import { ScenarioStatus } from "@/lib/enums";
+import { isProspectAvatarKey } from "@/lib/prospectAvatars";
 import {
   buildTeleproMissionsCatalogView,
   buildTeleproMissionsView,
   findStageInCatalog,
   findThemeInCatalog,
+  isReadyCatalogExercise,
   type MissionAttemptInput,
   type MissionExerciseInput,
   type MissionStageInput,
@@ -35,6 +37,15 @@ const SCENARIO_SAFE_SELECT = {
   prospectAvatarKey: true,
 } as const;
 
+/**
+ * Select catalogue : id du bundle publié uniquement (jamais artifacts/hash/prompts).
+ * personality sert au filtre de readiness, jamais exposée dans les nœuds catalogue.
+ */
+const SCENARIO_CATALOG_SELECT = {
+  ...SCENARIO_SAFE_SELECT,
+  publishedPromptBundleId: true,
+} as const;
+
 const THEME_SAFE_SELECT = {
   id: true,
   slug: true,
@@ -56,13 +67,61 @@ const STAGE_SAFE_SELECT = {
   status: true,
 } as const;
 
+function toCatalogExerciseInput(row: {
+  id: string;
+  name: string;
+  missionLevel: number;
+  sortOrder: number;
+  level: string;
+  objective: string | null;
+  prospectProfile: string | null;
+  personality: string | null;
+  successConditions: string | null;
+  targetDurationSec: number;
+  status: string;
+  organizationId: string;
+  missionStageId: string | null;
+  prospectAvatarKey: string | null;
+  publishedPromptBundleId: string | null;
+}): MissionExerciseInput | null {
+  const hasPublishedPrompt = Boolean(row.publishedPromptBundleId);
+  if (
+    !isProspectAvatarKey(row.prospectAvatarKey) ||
+    !row.personality?.trim() ||
+    !hasPublishedPrompt
+  ) {
+    return null;
+  }
+  const exercise: MissionExerciseInput = {
+    id: row.id,
+    name: row.name,
+    missionLevel: row.missionLevel,
+    sortOrder: row.sortOrder,
+    level: row.level,
+    objective: row.objective,
+    prospectProfile: row.prospectProfile,
+    // Readiness only — nœuds catalogue via toExerciseNode ne réexposent pas ce texte.
+    personality: row.personality,
+    successConditions: row.successConditions,
+    targetDurationSec: row.targetDurationSec,
+    status: row.status,
+    organizationId: row.organizationId,
+    missionStageId: row.missionStageId,
+    prospectAvatarKey: row.prospectAvatarKey,
+    hasPublishedPrompt: true,
+  };
+  return isReadyCatalogExercise(exercise) ? exercise : null;
+}
+
 async function loadAssignedExercisesAndAttempts(
   teleproId: string,
   organizationId: string,
+  options?: { forCatalog?: boolean },
 ): Promise<{
   exercises: MissionExerciseInput[];
   attempts: MissionAttemptInput[];
 }> {
+  const forCatalog = options?.forCatalog === true;
   const assignments = await prisma.scenarioAssignment.findMany({
     where: {
       teleproId,
@@ -73,11 +132,40 @@ async function loadAssignedExercisesAndAttempts(
       },
     },
     select: {
-      scenario: { select: SCENARIO_SAFE_SELECT },
+      scenario: {
+        select: forCatalog ? SCENARIO_CATALOG_SELECT : SCENARIO_SAFE_SELECT,
+      },
     },
   });
 
-  const exercises: MissionExerciseInput[] = assignments.map((a) => a.scenario);
+  let exercises: MissionExerciseInput[];
+  if (forCatalog) {
+    exercises = [];
+    for (const a of assignments) {
+      const mapped = toCatalogExerciseInput(
+        a.scenario as {
+          id: string;
+          name: string;
+          missionLevel: number;
+          sortOrder: number;
+          level: string;
+          objective: string | null;
+          prospectProfile: string | null;
+          personality: string | null;
+          successConditions: string | null;
+          targetDurationSec: number;
+          status: string;
+          organizationId: string;
+          missionStageId: string | null;
+          prospectAvatarKey: string | null;
+          publishedPromptBundleId: string | null;
+        },
+      );
+      if (mapped) exercises.push(mapped);
+    }
+  } else {
+    exercises = assignments.map((a) => a.scenario);
+  }
   const scenarioIds = exercises.map((e) => e.id);
 
   let attempts: MissionAttemptInput[] = [];
@@ -151,15 +239,18 @@ export async function loadTeleproMissionsView(
 }
 
 /**
- * Catalogue Thème → Phase → Exercice pour le téléprospecteur.
- * Isolation stricte org + télépro + PUBLISHED ; thèmes/phases DRAFT/ARCHIVED exclus.
+ * Catalogue Thème → Niveau → Exercice pour le téléprospecteur.
+ * Isolation stricte org + télépro + PUBLISHED ; thèmes/niveaux DRAFT/ARCHIVED exclus.
+ * Exercices incomplets (avatar, personnalité, prompt publié) exclus avant le build.
  */
 export async function loadTeleproMissionsCatalogView(
   teleproId: string,
   organizationId: string,
 ): Promise<TeleproMissionsCatalogView> {
   const [{ exercises, attempts }, { themes, stages }] = await Promise.all([
-    loadAssignedExercisesAndAttempts(teleproId, organizationId),
+    loadAssignedExercisesAndAttempts(teleproId, organizationId, {
+      forCatalog: true,
+    }),
     loadPublishedCatalogMeta(organizationId),
   ]);
   return buildTeleproMissionsCatalogView(
@@ -183,7 +274,7 @@ export async function loadTeleproMissionThemeView(
   return findThemeInCatalog(catalog, themeSlug);
 }
 
-/** Phase visible pour le télépro, ou null → 404. */
+/** Niveau visible pour le télépro, ou null → 404. */
 export async function loadTeleproMissionStageView(
   teleproId: string,
   organizationId: string,

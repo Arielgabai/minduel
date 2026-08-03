@@ -266,14 +266,15 @@ async function loadExerciseOrThrow(id: string, organizationId: string) {
 }
 
 /**
- * Vérifie qu'une phase est affectable à un exercice de cette organisation.
- * Hors organisation → 404 (aucune fuite d'existence) ; phase ou thème archivé
- * → 409. La contrainte SQL composite (missionStageId, organizationId) est la
- * seconde ligne de défense si cette garde était contournée.
+ * Vérifie qu'un niveau est affectable à un exercice de cette organisation.
+ * Hors organisation → 404 (aucune fuite d'existence) ; niveau ou thème archivé
+ * → 409 ; niveau déjà occupé par un autre exercice → 409. La contrainte SQL
+ * composite (missionStageId, organizationId) est la seconde ligne de défense.
  */
 async function resolveAssignableStageId(
   stageId: string,
   organizationId: string,
+  excludeExerciseId?: string,
 ): Promise<string> {
   const stage = await prisma.missionStage.findFirst({
     where: { id: stageId, organizationId },
@@ -283,12 +284,22 @@ async function resolveAssignableStageId(
       theme: { select: { status: true } },
     },
   });
-  if (!stage) throw new HttpError(404, "Phase de mission introuvable.");
+  if (!stage) throw new HttpError(404, "Niveau de mission introuvable.");
   if (stage.status === MissionStatus.ARCHIVED) {
-    throw new HttpError(409, "Phase archivée : classement impossible.");
+    throw new HttpError(409, "Niveau archivé : classement impossible.");
   }
   if (stage.theme?.status === MissionStatus.ARCHIVED) {
     throw new HttpError(409, "Thème archivé : classement impossible.");
+  }
+  const occupants = await prisma.scenario.count({
+    where: {
+      organizationId,
+      missionStageId: stage.id,
+      ...(excludeExerciseId ? { id: { not: excludeExerciseId } } : {}),
+    },
+  });
+  if (occupants > 0) {
+    throw new HttpError(409, "Ce niveau contient déjà un exercice.");
   }
   return stage.id;
 }
@@ -317,7 +328,7 @@ function bundleSummary(b: {
   };
 }
 
-/** Phase jointe : uniquement des libellés de classement, jamais de contenu. */
+/** Niveau joint : uniquement des libellés de classement, jamais de contenu. */
 type ListItemStage = {
   id: string;
   themeId: string;
@@ -489,66 +500,81 @@ export async function createExerciseDraft(
     : null;
 
   const now = nowIso();
-  const { scenario, bundle } = await prisma.$transaction(async (tx) => {
-    const created = await tx.scenario.create({
-      data: {
-        organizationId,
-        authorId: actorId,
-        name: body.name,
-        slug,
-        missionLevel: body.missionLevel,
-        sortOrder: body.sortOrder,
-        callType: body.callType,
-        level: body.level,
-        campaign: body.campaign ?? null,
-        offer: body.offer ?? null,
-        prospectProfile: body.prospectProfile ?? null,
-        initialSituation: body.initialSituation ?? null,
-        objective: body.objective ?? null,
-        personality: body.personality ?? null,
-        allowedObjections: stringifyJson(body.allowedObjections),
-        secretInfos: stringifyJson(body.secretInfos),
-        successConditions: body.successConditions ?? null,
-        failureConditions: body.failureConditions ?? null,
-        targetDurationSec: body.targetDurationSec,
-        traineeBrief: body.traineeBrief ?? null,
-        missionStageId,
-        prospectAvatarKey: body.prospectAvatarKey ?? null,
-        status: ScenarioStatus.DRAFT,
-        createdAt: now,
-        updatedAt: now,
-      },
+  let scenario: Awaited<ReturnType<typeof prisma.scenario.create>>;
+  let bundle: Awaited<ReturnType<typeof prisma.promptBundle.create>>;
+  try {
+    const created = await prisma.$transaction(async (tx) => {
+      const createdScenario = await tx.scenario.create({
+        data: {
+          organizationId,
+          authorId: actorId,
+          name: body.name,
+          slug,
+          missionLevel: body.missionLevel,
+          sortOrder: body.sortOrder,
+          callType: body.callType,
+          level: body.level,
+          campaign: body.campaign ?? null,
+          offer: body.offer ?? null,
+          prospectProfile: body.prospectProfile ?? null,
+          initialSituation: body.initialSituation ?? null,
+          objective: body.objective ?? null,
+          personality: body.personality ?? null,
+          allowedObjections: stringifyJson(body.allowedObjections),
+          secretInfos: stringifyJson(body.secretInfos),
+          successConditions: body.successConditions ?? null,
+          failureConditions: body.failureConditions ?? null,
+          targetDurationSec: body.targetDurationSec,
+          traineeBrief: body.traineeBrief ?? null,
+          missionStageId,
+          prospectAvatarKey: body.prospectAvatarKey ?? null,
+          status: ScenarioStatus.DRAFT,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      const personaBody = buildProspectPersona(
+        scenarioToSimShape(createdScenario),
+        [],
+        "{{prospectName}}",
+      );
+      const artifacts: AdminPromptArtifacts = {
+        [PromptKind.PROSPECT_PERSONA]: {
+          body: personaBody,
+          contentType: "text/plain",
+        },
+      };
+      const contentHash = hashPromptArtifacts(artifacts);
+
+      const createdBundle = await tx.promptBundle.create({
+        data: {
+          organizationId,
+          scenarioId: createdScenario.id,
+          version: 1,
+          status: PromptBundleStatus.DRAFT,
+          label: "v1 — brouillon initial",
+          createdById: actorId,
+          createdAt: now,
+          artifacts: stringifyJson(artifacts),
+          contentHash,
+        },
+      });
+
+      return { scenario: createdScenario, bundle: createdBundle };
     });
-
-    const personaBody = buildProspectPersona(
-      scenarioToSimShape(created),
-      [],
-      "{{prospectName}}",
-    );
-    const artifacts: AdminPromptArtifacts = {
-      [PromptKind.PROSPECT_PERSONA]: {
-        body: personaBody,
-        contentType: "text/plain",
-      },
-    };
-    const contentHash = hashPromptArtifacts(artifacts);
-
-    const createdBundle = await tx.promptBundle.create({
-      data: {
-        organizationId,
-        scenarioId: created.id,
-        version: 1,
-        status: PromptBundleStatus.DRAFT,
-        label: "v1 — brouillon initial",
-        createdById: actorId,
-        createdAt: now,
-        artifacts: stringifyJson(artifacts),
-        contentHash,
-      },
-    });
-
-    return { scenario: created, bundle: createdBundle };
-  });
+    scenario = created.scenario;
+    bundle = created.bundle;
+  } catch (err) {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002" &&
+      missionStageId
+    ) {
+      throw new HttpError(409, "Ce niveau contient déjà un exercice.");
+    }
+    throw err;
+  }
 
   await logAudit({
     organizationId,
@@ -578,7 +604,11 @@ export async function updateExerciseMetadata(
   let missionStageId = existing.missionStageId;
   if (body.missionStageId !== undefined) {
     missionStageId = body.missionStageId
-      ? await resolveAssignableStageId(body.missionStageId, organizationId)
+      ? await resolveAssignableStageId(
+          body.missionStageId,
+          organizationId,
+          id,
+        )
       : null;
   }
   let prospectAvatarKey = existing.prospectAvatarKey;
@@ -595,56 +625,67 @@ export async function updateExerciseMetadata(
     await assertUniqueSlug(organizationId, slug, id);
   }
 
-  await prisma.scenario.update({
-    where: { id },
-    data: {
-      name: body.name ?? existing.name,
-      slug,
-      level: body.level ?? existing.level,
-      missionLevel: body.missionLevel ?? existing.missionLevel,
-      sortOrder: body.sortOrder ?? existing.sortOrder,
-      callType: body.callType ?? existing.callType,
-      campaign: body.campaign !== undefined ? body.campaign : existing.campaign,
-      offer: body.offer !== undefined ? body.offer : existing.offer,
-      prospectProfile:
-        body.prospectProfile !== undefined
-          ? body.prospectProfile
-          : existing.prospectProfile,
-      initialSituation:
-        body.initialSituation !== undefined
-          ? body.initialSituation
-          : existing.initialSituation,
-      objective:
-        body.objective !== undefined ? body.objective : existing.objective,
-      personality:
-        body.personality !== undefined
-          ? body.personality
-          : existing.personality,
-      allowedObjections: body.allowedObjections
-        ? stringifyJson(body.allowedObjections)
-        : existing.allowedObjections,
-      secretInfos: body.secretInfos
-        ? stringifyJson(body.secretInfos)
-        : existing.secretInfos,
-      successConditions:
-        body.successConditions !== undefined
-          ? body.successConditions
-          : existing.successConditions,
-      failureConditions:
-        body.failureConditions !== undefined
-          ? body.failureConditions
-          : existing.failureConditions,
-      targetDurationSec: body.targetDurationSec ?? existing.targetDurationSec,
-      traineeBrief:
-        body.traineeBrief !== undefined
-          ? body.traineeBrief
-          : existing.traineeBrief,
-      // Le bundle de prompts n'est jamais touché par cette mise à jour.
-      missionStageId,
-      prospectAvatarKey,
-      updatedAt: nowIso(),
-    },
-  });
+  try {
+    await prisma.scenario.update({
+      where: { id },
+      data: {
+        name: body.name ?? existing.name,
+        slug,
+        level: body.level ?? existing.level,
+        missionLevel: body.missionLevel ?? existing.missionLevel,
+        sortOrder: body.sortOrder ?? existing.sortOrder,
+        callType: body.callType ?? existing.callType,
+        campaign: body.campaign !== undefined ? body.campaign : existing.campaign,
+        offer: body.offer !== undefined ? body.offer : existing.offer,
+        prospectProfile:
+          body.prospectProfile !== undefined
+            ? body.prospectProfile
+            : existing.prospectProfile,
+        initialSituation:
+          body.initialSituation !== undefined
+            ? body.initialSituation
+            : existing.initialSituation,
+        objective:
+          body.objective !== undefined ? body.objective : existing.objective,
+        personality:
+          body.personality !== undefined
+            ? body.personality
+            : existing.personality,
+        allowedObjections: body.allowedObjections
+          ? stringifyJson(body.allowedObjections)
+          : existing.allowedObjections,
+        secretInfos: body.secretInfos
+          ? stringifyJson(body.secretInfos)
+          : existing.secretInfos,
+        successConditions:
+          body.successConditions !== undefined
+            ? body.successConditions
+            : existing.successConditions,
+        failureConditions:
+          body.failureConditions !== undefined
+            ? body.failureConditions
+            : existing.failureConditions,
+        targetDurationSec: body.targetDurationSec ?? existing.targetDurationSec,
+        traineeBrief:
+          body.traineeBrief !== undefined
+            ? body.traineeBrief
+            : existing.traineeBrief,
+        // Le bundle de prompts n'est jamais touché par cette mise à jour.
+        missionStageId,
+        prospectAvatarKey,
+        updatedAt: nowIso(),
+      },
+    });
+  } catch (err) {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002" &&
+      missionStageId
+    ) {
+      throw new HttpError(409, "Ce niveau contient déjà un exercice.");
+    }
+    throw err;
+  }
 
   await logAudit({
     organizationId,

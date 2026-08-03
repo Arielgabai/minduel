@@ -9,6 +9,7 @@ import {
   ScenarioStatus,
   SimulationStatus,
 } from "@/lib/enums";
+import { isProspectAvatarKey } from "@/lib/prospectAvatars";
 
 /** Statuts métier affichés (non persistés). */
 export const ExerciseMissionStatus = {
@@ -72,8 +73,13 @@ export type MissionExerciseInput = {
   organizationId: string;
   /** Classement N1/N2 : null = exercice non classe. */
   missionStageId?: string | null;
-  /** Cle catalogue local d'avatar (jamais d'URL). */
+  /** Clé catalogue local d'avatar (jamais d'URL). */
   prospectAvatarKey?: string | null;
+  /**
+   * Prompt publié prêt (catalogue). Optionnel :
+   * le service filtre avant build ; si fourni, false exclut l'exercice.
+   */
+  hasPublishedPrompt?: boolean;
 };
 
 /** Theme Missions publie (projection sure). */
@@ -87,7 +93,7 @@ export type MissionThemeInput = {
   status: string;
 };
 
-/** Phase/niveau Missions publie (projection sure). */
+/** Niveau Missions publié (projection sûre). */
 export type MissionStageInput = {
   id: string;
   themeId: string;
@@ -385,6 +391,8 @@ export function buildTeleproMissionsView(
   exercisesInput: readonly MissionExerciseInput[],
   attemptsInput: readonly MissionAttemptInput[],
 ): TeleproMissionsView {
+  // Moteur plat lot I : pas de filtre catalogue N4 (avatar/prompt).
+  // La readiness s'applique uniquement au catalogue Theme -> Niveau.
   const exercises = sortMissionExercises(exercisesInput);
   const attemptsByScenario = new Map<string, MissionAttemptInput[]>();
   for (const attempt of attemptsInput) {
@@ -483,7 +491,7 @@ export function buildTeleproMissionsView(
 
 
 // ---------------------------------------------------------------------------
-// Catalogue Thème → Phase → Exercice (LOT N2)
+// Catalogue Thème → Niveau → Exercice (LOT N4)
 // ---------------------------------------------------------------------------
 
 export type TeleproMissionExerciseNode = {
@@ -545,8 +553,8 @@ export type TeleproMissionsCatalogView = {
   empty: boolean;
 };
 
-export function legacyStageSlug(levelNumber: number): string {
-  return LEGACY_STAGE_SLUG_PREFIX + String(levelNumber) + "__";
+export function legacyStageSlug(levelNumberOrId: number | string): string {
+  return LEGACY_STAGE_SLUG_PREFIX + String(levelNumberOrId) + "__";
 }
 
 export function isLegacyThemeSlug(slug: string): boolean {
@@ -584,9 +592,10 @@ function compareThemes(
 }
 
 /**
- * Déblocage des phases présentes d'un thème :
- * 1) première phase ouverte ; 2) suivante si toutes les précédentes sont terminées ;
+ * Déblocage des niveaux présents d'un thème :
+ * 1) premier niveau ouvert ; 2) suivant si tous les précédents sont terminés ;
  * 3) trous de numérotation non bloquants.
+ * Avec 1 exercice par niveau, un exercice terminé complète le niveau.
  */
 export function resolveUnlockedStageIds(
   stages: readonly Pick<
@@ -617,6 +626,18 @@ export function resolveUnlockedStageIds(
     if (allPreviousCompleted) unlocked.add(stage.id);
   }
   return unlocked;
+}
+
+/**
+ * Exercice « prêt » pour le catalogue télépro :
+ * avatar valide, personnalité non vide, prompt publié si le flag est fourni.
+ * Le service filtre aussi avant build ; ce garde-fou évite les nœuds incomplets.
+ */
+export function isReadyCatalogExercise(exercise: MissionExerciseInput): boolean {
+  if (!isProspectAvatarKey(exercise.prospectAvatarKey)) return false;
+  if (!exercise.personality?.trim()) return false;
+  if (exercise.hasPublishedPrompt === false) return false;
+  return true;
 }
 
 function toExerciseNode(
@@ -722,7 +743,7 @@ function buildStageView(args: {
         n.status === ExerciseMissionStatus.IN_PROGRESS,
     )
   ) {
-    // Priorité COMPLETED / IN_PROGRESS : la phase reste consultable.
+    // Priorité COMPLETED / IN_PROGRESS : le niveau reste consultable.
     state =
       completedCount === exerciseCount && exerciseCount > 0
         ? "COMPLETED"
@@ -784,9 +805,11 @@ function markRecommended(
 }
 
 /**
- * Construit le catalogue télépro Thème → Phase → Exercice.
- * Les thèmes/phases non PUBLISHED sont exclus.
- * Les exercices non classés forment un thème synthétique « Parcours existant ».
+ * Construit le catalogue télépro Thème → Niveau → Exercice.
+ * Les thèmes/niveaux non PUBLISHED sont exclus.
+ * Les exercices incomplets (avatar / personnalité / prompt) sont exclus.
+ * Les exercices non classés forment un thème synthétique « Parcours existant »
+ * (1 exercice = 1 niveau synthétique, déblocage séquentiel).
  */
 export function buildTeleproMissionsCatalogView(
   exercisesInput: readonly MissionExerciseInput[],
@@ -805,7 +828,10 @@ export function buildTeleproMissionsCatalogView(
   const publishedStageIds = new Set(publishedStages.map((s) => s.id));
   const publishedThemeIds = new Set(publishedThemes.map((t) => t.id));
 
-  const exercises = sortMissionExercises(exercisesInput);
+  // Filtre readiness N4 : avatar + personnalite + prompt.
+  const exercises = sortMissionExercises(
+    exercisesInput.filter(isReadyCatalogExercise),
+  );
   const attemptsByScenario = new Map<string, MissionAttemptInput[]>();
   for (const attempt of attemptsInput) {
     const list = attemptsByScenario.get(attempt.scenarioId) ?? [];
@@ -850,7 +876,7 @@ export function buildTeleproMissionsCatalogView(
         classified.filter((e) => e.missionStageId === stage.id),
       );
     }
-    // Ne garder que les phases qui ont au moins un exercice assigné visible.
+    // Ne garder que les niveaux qui ont au moins un exercice assigné visible.
     const presentStages = themeStages.filter(
       (s) => (stageExercises.get(s.id) ?? []).length > 0,
     );
@@ -894,25 +920,28 @@ export function buildTeleproMissionsCatalogView(
   }
 
   if (unclassified.length > 0) {
-    const levels = [
-      ...new Set(unclassified.map((e) => e.missionLevel)),
-    ].sort((a, b) => a - b);
-    const syntheticStages: MissionStageInput[] = levels.map((levelNumber) => ({
-      id: LEGACY_THEME_ID + "-stage-" + String(levelNumber),
-      themeId: LEGACY_THEME_ID,
-      slug: legacyStageSlug(levelNumber),
-      name: "Niveau " + String(levelNumber),
-      description: null,
-      levelNumber,
-      sortOrder: levelNumber,
-      status: "PUBLISHED",
-    }));
+    // 1 exercice non classé = 1 niveau synthétique (ordre missionLevel → sortOrder → name → id).
+    const orderedLegacy = sortMissionExercises(unclassified);
+    const syntheticStages: MissionStageInput[] = orderedLegacy.map(
+      (exercise, index) => {
+        const levelNumber = index + 1;
+        return {
+          id: LEGACY_THEME_ID + "-ex-" + exercise.id,
+          themeId: LEGACY_THEME_ID,
+          slug: legacyStageSlug(exercise.id),
+          name: "Niveau " + String(levelNumber),
+          description: null,
+          levelNumber,
+          sortOrder: levelNumber,
+          status: "PUBLISHED",
+        };
+      },
+    );
     const stageExercises = new Map<string, MissionExerciseInput[]>();
-    for (const stage of syntheticStages) {
-      stageExercises.set(
-        stage.id,
-        unclassified.filter((e) => e.missionLevel === stage.levelNumber),
-      );
+    for (let i = 0; i < syntheticStages.length; i++) {
+      const stage = syntheticStages[i]!;
+      const exercise = orderedLegacy[i]!;
+      stageExercises.set(stage.id, [exercise]);
     }
     const unlocked = resolveUnlockedStageIds(
       syntheticStages,

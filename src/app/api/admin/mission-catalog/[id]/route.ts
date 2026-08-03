@@ -2,19 +2,22 @@ import { z } from "zod";
 import { HttpError } from "@/lib/httpError";
 import { handle, ok } from "@/lib/api";
 import { requirePlatformAdmin } from "@/lib/auth";
-import type {
-  MissionCatalogAction,
-  MissionEntityKind,
+import {
+  MissionStageAssignExerciseSchema,
+  type MissionCatalogAction,
+  type MissionEntityKind,
 } from "@/lib/missionCatalog";
 import {
   archiveMissionStage,
   archiveMissionTheme,
+  assignExerciseToStage,
   deleteMissionStage,
   deleteMissionTheme,
   getMissionStage,
   getMissionTheme,
   publishMissionStage,
   publishMissionTheme,
+  unassignExerciseFromStage,
   unpublishMissionStage,
   unpublishMissionTheme,
   updateMissionStage,
@@ -27,7 +30,13 @@ const BodyEntitySchema = z.object({ entity: EntityValueSchema });
 
 const ActionSchema = z.object({
   entity: EntityValueSchema,
-  action: z.enum(["publish", "unpublish", "archive"]),
+  action: z.enum([
+    "publish",
+    "unpublish",
+    "archive",
+    "assignExercise",
+    "unassignExercise",
+  ]),
 });
 
 function entityFromQuery(req: Request): MissionEntityKind {
@@ -101,7 +110,10 @@ export async function DELETE(
   });
 }
 
-/** Transitions de cycle de vie : publish / unpublish / archive. */
+/**
+ * Transitions de cycle de vie : publish / unpublish / archive.
+ * Association exercice (stage uniquement) : assignExercise / unassignExercise.
+ */
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -111,12 +123,44 @@ export async function POST(
     const { id } = await params;
     const body = await req.json();
     const { entity, action } = ActionSchema.parse(body);
-    const a = action as MissionCatalogAction;
+
+    if (action === "assignExercise" || action === "unassignExercise") {
+      if (entity !== "stage") {
+        throw new HttpError(
+          422,
+          "assignExercise / unassignExercise réservés à entity=stage.",
+        );
+      }
+      if (action === "assignExercise") {
+        // Schema .strict() : ne garder que exerciseId (entity/action exclus).
+        const assignBody = { ...(body as Record<string, unknown>) };
+        delete assignBody.entity;
+        delete assignBody.action;
+        const { exerciseId } = MissionStageAssignExerciseSchema.parse(assignBody);
+        return ok(
+          await assignExerciseToStage(
+            id,
+            admin.organizationId,
+            admin.id,
+            exerciseId,
+          ),
+        );
+      }
+      return ok(
+        await unassignExerciseFromStage(id, admin.organizationId, admin.id),
+      );
+    }
+
+    type LifecycleAction = Exclude<
+      MissionCatalogAction,
+      "assignExercise" | "unassignExercise"
+    >;
+    const a = action as LifecycleAction;
 
     const handlers: Record<
       MissionEntityKind,
       Record<
-        MissionCatalogAction,
+        LifecycleAction,
         (id: string, orgId: string, actorId: string) => Promise<unknown>
       >
     > = {

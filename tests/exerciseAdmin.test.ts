@@ -245,6 +245,28 @@ vi.mock("@/lib/db", () => {
       bundles = bundles.filter((b) => b.scenarioId !== where.id);
       return { id: where.id };
     },
+    count: async ({ where }: { where?: Record<string, unknown> }) =>
+      scenarios.filter((row) => {
+        if (
+          where?.organizationId &&
+          row.organizationId !== where.organizationId
+        )
+          return false;
+        if ("missionStageId" in (where ?? {})) {
+          const expected = (where as { missionStageId: string | null })
+            .missionStageId;
+          if (row.missionStageId !== expected) return false;
+        }
+        if (
+          where?.id &&
+          typeof where.id === "object" &&
+          "not" in (where.id as object) &&
+          row.id === (where.id as { not: string }).not
+        ) {
+          return false;
+        }
+        return true;
+      }).length,
   };
 
   const promptBundleApi = {
@@ -853,7 +875,7 @@ describe("classement Missions et avatar de prospect (lot N1)", () => {
     return stage;
   }
 
-  it("classe un exercice dans une phase de la même organisation", async () => {
+  it("classe un exercice dans un niveau de la même organisation", async () => {
     const svc = await import("@/lib/exerciseAdminService");
     const ex = await seedExercise();
     const stage = seedStage();
@@ -870,7 +892,7 @@ describe("classement Missions et avatar de prospect (lot N1)", () => {
     expect(scenarios[0]!.publishedPromptBundleId).toBeNull();
   });
 
-  it("refuse une phase d'une autre organisation (404)", async () => {
+  it("refuse un niveau d'une autre organisation (404)", async () => {
     const svc = await import("@/lib/exerciseAdminService");
     const ex = await seedExercise();
     seedStage({ id: "stage-foreign", organizationId: "org2" });
@@ -882,7 +904,7 @@ describe("classement Missions et avatar de prospect (lot N1)", () => {
     expect(scenarios[0]!.missionStageId).toBeNull();
   });
 
-  it("refuse une phase ou un thème archivé (409)", async () => {
+  it("refuse un niveau ou un thème archivé (409)", async () => {
     const svc = await import("@/lib/exerciseAdminService");
     const ex = await seedExercise();
     seedStage({ id: "stage-archived", status: "ARCHIVED" });
@@ -940,7 +962,7 @@ describe("classement Missions et avatar de prospect (lot N1)", () => {
     ).rejects.toMatchObject({ status: 409 });
   });
 
-  it("liste : filtres thème / phase / non classé, sans donnée sensible", async () => {
+  it("liste : filtres thème / niveau / non classé, sans donnée sensible", async () => {
     const svc = await import("@/lib/exerciseAdminService");
     const stage = seedStage();
     await seedExercise({ id: "ex-classe", missionStageId: stage.id });
@@ -982,6 +1004,27 @@ describe("classement Missions et avatar de prospect (lot N1)", () => {
     ]) {
       expect(serialized).not.toContain(forbidden);
     }
+  });
+
+
+  it("refuse un second exercice sur un niveau déjà occupé (409)", async () => {
+    const svc = await import("@/lib/exerciseAdminService");
+    const stage = seedStage();
+    await seedExercise({
+      id: "ex-occupant",
+      slug: "occupant",
+      missionStageId: stage.id,
+    });
+    const ex = await seedExercise({ id: "ex-challenger", slug: "challenger" });
+    await expect(
+      svc.updateExerciseMetadata(ex.id, "org1", "admin1", {
+        missionStageId: stage.id,
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: "Ce niveau contient déjà un exercice.",
+    });
+    expect(scenarios.find((x) => x.id === "ex-challenger")!.missionStageId).toBeNull();
   });
 
   it("création : classement et avatar validés dès le brouillon", async () => {

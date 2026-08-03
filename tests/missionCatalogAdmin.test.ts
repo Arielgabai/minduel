@@ -42,6 +42,12 @@ type ScenarioRow = {
   id: string;
   organizationId: string;
   missionStageId: string | null;
+  name?: string;
+  status?: string;
+  prospectAvatarKey?: string | null;
+  personality?: string | null;
+  publishedPromptBundleId?: string | null;
+  publishedPromptBundleStatus?: string | null;
 };
 
 let themes: ThemeRow[] = [];
@@ -181,14 +187,58 @@ vi.mock("@/lib/db", () => {
     },
   };
 
+  function projectScenario(s: ScenarioRow) {
+    return {
+      id: s.id,
+      name: s.name ?? s.id,
+      status: s.status ?? "DRAFT",
+      prospectAvatarKey: s.prospectAvatarKey ?? null,
+      personality: s.personality ?? null,
+      publishedPromptBundleId: s.publishedPromptBundleId ?? null,
+      missionStageId: s.missionStageId,
+      publishedPromptBundle:
+        s.publishedPromptBundleId && s.publishedPromptBundleStatus
+          ? {
+              id: s.publishedPromptBundleId,
+              status: s.publishedPromptBundleStatus,
+            }
+          : null,
+    };
+  }
+
   const scenarioApi = {
     count: async ({ where }: { where?: Record<string, unknown> }) =>
-      scenarios.filter((s) => matches(s, where)).length,
+      scenarios.filter((s) => matches(s as unknown as Record<string, unknown>, where))
+        .length,
+    findFirst: async ({ where }: { where?: Record<string, unknown> }) => {
+      const found = scenarios.find((s) =>
+        matches(s as unknown as Record<string, unknown>, where),
+      );
+      return found ? projectScenario(found) : null;
+    },
+    findMany: async ({ where }: { where?: Record<string, unknown> }) =>
+      scenarios
+        .filter((s) => matches(s as unknown as Record<string, unknown>, where))
+        .map(projectScenario),
+    update: async ({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: Partial<ScenarioRow>;
+    }) => {
+      const idx = scenarios.findIndex((x) => x.id === where.id);
+      scenarios[idx] = { ...scenarios[idx]!, ...data };
+      return projectScenario(scenarios[idx]!);
+    },
     groupBy: async () => {
       const counts = new Map<string, number>();
-      for (const s of scenarios) {
-        if (!s.missionStageId) continue;
-        counts.set(s.missionStageId, (counts.get(s.missionStageId) ?? 0) + 1);
+      for (const row of scenarios) {
+        if (!row.missionStageId) continue;
+        counts.set(
+          row.missionStageId,
+          (counts.get(row.missionStageId) ?? 0) + 1,
+        );
       }
       return [...counts.entries()].map(([missionStageId, n]) => ({
         missionStageId,
@@ -202,6 +252,9 @@ vi.mock("@/lib/db", () => {
       missionTheme: missionThemeApi,
       missionStage: missionStageApi,
       scenario: scenarioApi,
+      $transaction: async (
+        fn: (tx: { scenario: typeof scenarioApi }) => Promise<unknown>,
+      ) => fn({ scenario: scenarioApi }),
     },
   };
 });
@@ -297,7 +350,7 @@ describe("thèmes", () => {
     ).rejects.toMatchObject({ status: 409 });
   });
 
-  it("supprime un thème brouillon non référencé, refuse s'il a des phases", async () => {
+  it("supprime un thème brouillon non référencé, refuse s'il a des niveaux", async () => {
     const s = await svc();
     const theme = await s.createMissionTheme("org1", "admin1", {
       name: "Closing",
@@ -319,8 +372,8 @@ describe("thèmes", () => {
   });
 });
 
-describe("phases", () => {
-  it("crée une phase rattachée au thème", async () => {
+describe("niveaux", () => {
+  it("crée un niveau rattaché au thème", async () => {
     const s = await svc();
     const theme = await s.createMissionTheme("org1", "admin1", {
       name: "Closing",
@@ -349,7 +402,7 @@ describe("phases", () => {
     ).rejects.toMatchObject({ status: 404 });
   });
 
-  it("refuse deux phases de même niveau dans un thème", async () => {
+  it("refuse deux niveaux de même numéro dans un thème", async () => {
     const s = await svc();
     const theme = await s.createMissionTheme("org1", "admin1", {
       name: "Closing",
@@ -377,17 +430,69 @@ describe("phases", () => {
       themeId: theme.id,
       name: "Niveau 1",
     });
+    scenarios.push({
+      id: "ex-ready-draft-theme",
+      organizationId: "org1",
+      missionStageId: stage.id,
+      name: "Pret",
+      status: "PUBLISHED",
+      prospectAvatarKey: "lena",
+      personality: "Direct",
+      publishedPromptBundleId: "pb-1",
+      publishedPromptBundleStatus: "PUBLISHED",
+    });
     await expect(
       s.publishMissionStage(stage.id, "org1", "admin1"),
     ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      s.publishMissionStage(stage.id, "org1", "admin1"),
+    ).rejects.toThrow(/Thème non publié|Niveau non prêt/);
+  });
 
+  it("après thème publié, niveau vide refuse ; niveau prêt publie", async () => {
+    const s = await svc();
+    const theme = await s.createMissionTheme("org1", "admin1", {
+      name: "Closing",
+    });
+    const empty = await s.createMissionStage("org1", "admin1", {
+      themeId: theme.id,
+      name: "Niveau vide",
+      levelNumber: 1,
+    });
+    const readyStage = await s.createMissionStage("org1", "admin1", {
+      themeId: theme.id,
+      name: "Niveau prêt",
+      levelNumber: 2,
+    });
     await s.publishMissionTheme(theme.id, "org1", "admin1");
-    const published = await s.publishMissionStage(stage.id, "org1", "admin1");
+    await expect(
+      s.publishMissionStage(empty.id, "org1", "admin1"),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      s.publishMissionStage(empty.id, "org1", "admin1"),
+    ).rejects.toThrow(/Aucun exercice associé/);
+
+    scenarios.push({
+      id: "ex-ready-pub",
+      organizationId: "org1",
+      missionStageId: readyStage.id,
+      name: "Pret",
+      status: "PUBLISHED",
+      prospectAvatarKey: "lena",
+      personality: "Direct",
+      publishedPromptBundleId: "pb-ready",
+      publishedPromptBundleStatus: "PUBLISHED",
+    });
+    const published = await s.publishMissionStage(
+      readyStage.id,
+      "org1",
+      "admin1",
+    );
     expect(published.status).toBe("PUBLISHED");
     expect(published.publishedAt).not.toBeNull();
   });
 
-  it("hard-delete refusé si des exercices référencent la phase", async () => {
+  it("hard-delete refusé si des exercices référencent le niveau", async () => {
     const s = await svc();
     const themeId = await seedPublishedTheme();
     const stage = await s.createMissionStage("org1", "admin1", {
@@ -398,6 +503,12 @@ describe("phases", () => {
       id: "ex-1",
       organizationId: "org1",
       missionStageId: stage.id,
+      name: "Ex",
+      status: "DRAFT",
+      prospectAvatarKey: "lena",
+      personality: "Direct",
+      publishedPromptBundleId: null,
+      publishedPromptBundleStatus: null,
     });
     await expect(
       s.deleteMissionStage(stage.id, "org1", "admin1"),
@@ -409,7 +520,7 @@ describe("phases", () => {
     ).resolves.toEqual({ deleted: true });
   });
 
-  it("phase d'une autre organisation : 404", async () => {
+  it("niveau d'une autre organisation : 404", async () => {
     const s = await svc();
     const themeId = await seedPublishedTheme();
     const stage = await s.createMissionStage("org1", "admin1", {
@@ -437,30 +548,48 @@ describe("arbre du catalogue", () => {
       id: "ex-1",
       organizationId: "org1",
       missionStageId: stage.id,
+      name: "Exercice classé",
+      status: "PUBLISHED",
+      prospectAvatarKey: "lena",
+      personality: "secret-persona-text",
+      publishedPromptBundleId: "pb-secret",
+      publishedPromptBundleStatus: "PUBLISHED",
     });
     scenarios.push({
       id: "ex-2",
       organizationId: "org1",
       missionStageId: null,
+      name: "Legacy",
+      status: "DRAFT",
     });
 
     const tree = await s.listMissionCatalog("org1");
     expect(tree).toHaveLength(1);
     expect(tree[0]!.stages[0]!.exerciseCount).toBe(1);
+    expect(tree[0]!.stages[0]!.exercise).toMatchObject({
+      id: "ex-1",
+      name: "Exercice classé",
+      status: "PUBLISHED",
+      prospectAvatarKey: "lena",
+      hasPersonality: true,
+      hasPublishedPrompt: true,
+    });
+    expect(tree[0]!.stages[0]!.readiness.readyToPublish).toBe(true);
 
     const serialized = JSON.stringify(tree);
     for (const forbidden of [
       "artifacts",
       "contentHash",
-      "prompt",
-      "persona",
       "secret",
-      // La projection ne laisse sortir ni l'organisation ni l'acteur.
       "organizationId",
       "createdById",
+      "publishedPromptBundleId",
+      "secret-persona-text",
     ]) {
       expect(serialized).not.toContain(forbidden);
     }
+    expect(serialized).not.toMatch(/"prompt"\s*:/);
+    expect(serialized).not.toMatch(/"personality"\s*:/);
   });
 
   it("isole strictement les organisations", async () => {
@@ -534,9 +663,16 @@ describe("migration du catalogue", () => {
     expect(sql.startsWith("--")).toBe(true);
   });
 
-  it("ne modifie aucune migration antérieure", () => {
+  it("ne modifie aucune migration antérieure à N1", () => {
+    const n4Dir = "20260804100000_mission_stage_single_scenario";
     const previous = readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && e.name !== MIGRATION_DIR)
+      .filter(
+        (e) =>
+          e.isDirectory() &&
+          e.name !== MIGRATION_DIR &&
+          e.name !== n4Dir &&
+          e.name < MIGRATION_DIR,
+      )
       .map((e) => e.name);
     expect(previous.length).toBeGreaterThan(0);
     for (const dir of previous) {
@@ -551,6 +687,21 @@ describe("migration du catalogue", () => {
     }
   });
 
+  it("migration N4 existe ; N1 inchangée (pas d'index unique Scenario)", () => {
+    const n4Dir = "20260804100000_mission_stage_single_scenario";
+    const n4Path = join(MIGRATIONS_DIR, n4Dir, "migration.sql");
+    expect(readdirSync(MIGRATIONS_DIR)).toContain(n4Dir);
+    const n4 = readFileSync(n4Path, "utf8");
+    expect(n4).toContain(
+      'CREATE UNIQUE INDEX "Scenario_missionStageId_organizationId_key"',
+    );
+    expect(n4).toMatch(/doublon/i);
+    expect(sql).toContain('CREATE TABLE "MissionTheme"');
+    expect(sql).not.toContain(
+      'CREATE UNIQUE INDEX "Scenario_missionStageId_organizationId_key"',
+    );
+  });
+
   it("le schéma Prisma conserve les champs legacy des exercices", () => {
     const schema = readRepoFile("prisma", "schema.prisma");
     expect(schema).toMatch(/missionLevel\s+Int/);
@@ -558,6 +709,8 @@ describe("migration du catalogue", () => {
     expect(schema).toMatch(/missionStageId\s+String\?/);
     expect(schema).toMatch(/prospectAvatarKey\s+String\?/);
     expect(schema).toContain("onDelete: Restrict");
+    expect(schema).toContain("@@unique([missionStageId, organizationId])");
+    expect(schema).toMatch(/scenario\s+Scenario\?/);
   });
 });
 

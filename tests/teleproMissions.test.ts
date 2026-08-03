@@ -42,6 +42,8 @@ function exercise(
     targetDurationSec: 300,
     status: ScenarioStatus.PUBLISHED,
     organizationId: ORG,
+    prospectAvatarKey: "lena",
+    hasPublishedPrompt: true,
     ...overrides,
   };
 }
@@ -532,9 +534,11 @@ describe("teleproMissions ? isolation secrets et OpenAI", () => {
     expect(src).toContain("SCENARIO_SAFE_SELECT");
     expect(src).not.toContain("secretInfos");
     expect(src).not.toContain("aiProspect");
-    expect(src).not.toContain("artifacts");
-    expect(src).not.toContain("contentHash");
-    expect(src).not.toContain("PromptBundle");
+    expect(src).not.toMatch(/artifacts\s*:/);
+    expect(src).not.toMatch(/contentHash\s*:/);
+    // Mentions défensives OK ; aucun select de contenu sensible.
+    expect(src).toContain("SCENARIO_SAFE_SELECT");
+    expect(src).toContain("jamais artifacts");
     expect(src).toContain('import "server-only"');
   });
 

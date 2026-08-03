@@ -8,6 +8,7 @@ import {
   editorStateFromBundle,
   formatListClassification,
   isArchivedReadOnly,
+  collectOccupiedStageIds,
   isStageSelectable,
   listItemLooksSafe,
   metaFormFromExercise,
@@ -25,6 +26,7 @@ import {
 import {
   MISSION_UNCLASSIFIED,
   UNCLASSIFIED_LABEL,
+  buildMissionLevelReadiness,
   type MissionThemeNode,
 } from "@/lib/missionCatalog";
 
@@ -409,6 +411,10 @@ describe("Admin UI — pages App Router sans exports nommés", () => {
 });
 
 describe("Admin UI — classement Missions et avatars (lot N1)", () => {
+  const emptyReadiness = buildMissionLevelReadiness({
+    themeStatus: "PUBLISHED",
+    exercise: null,
+  });
   const themes: MissionThemeNode[] = [
     {
       id: "theme-1",
@@ -432,13 +438,32 @@ describe("Admin UI — classement Missions et avatars (lot N1)", () => {
           status: "PUBLISHED",
           createdAt: "2026-08-01",
           updatedAt: "2026-08-01",
-          exerciseCount: 2,
+          exerciseCount: 1,
+          exercise: {
+            id: "ex-on-stage-1",
+            name: "Barrage",
+            status: "PUBLISHED",
+            prospectAvatarKey: "lena",
+            hasPersonality: true,
+            hasPublishedPrompt: true,
+          },
+          readiness: buildMissionLevelReadiness({
+            themeStatus: "PUBLISHED",
+            exercise: {
+              id: "ex-on-stage-1",
+              name: "Barrage",
+              status: "PUBLISHED",
+              prospectAvatarKey: "lena",
+              hasPersonality: true,
+              hasPublishedPrompt: true,
+            },
+          }),
         },
         {
           id: "stage-archived",
           themeId: "theme-1",
-          name: "Ancienne phase",
-          slug: "ancienne-phase",
+          name: "Ancien niveau",
+          slug: "ancien-niveau",
           description: null,
           levelNumber: 2,
           sortOrder: 1,
@@ -446,6 +471,8 @@ describe("Admin UI — classement Missions et avatars (lot N1)", () => {
           createdAt: "2026-08-01",
           updatedAt: "2026-08-01",
           exerciseCount: 0,
+          exercise: null,
+          readiness: emptyReadiness,
         },
       ],
     },
@@ -472,12 +499,17 @@ describe("Admin UI — classement Missions et avatars (lot N1)", () => {
           createdAt: "2026-08-01",
           updatedAt: "2026-08-01",
           exerciseCount: 0,
+          exercise: null,
+          readiness: buildMissionLevelReadiness({
+            themeStatus: "ARCHIVED",
+            exercise: null,
+          }),
         },
       ],
     },
   ];
 
-  it("les phases proposées dépendent du thème sélectionné", () => {
+  it("les niveaux proposés dépendent du thème sélectionné", () => {
     expect(resolveStageOptions(themes, "theme-1").map((s) => s.id)).toEqual([
       "stage-1",
       "stage-archived",
@@ -487,13 +519,13 @@ describe("Admin UI — classement Missions et avatars (lot N1)", () => {
     expect(resolveStageOptions(themes, "theme-inconnu")).toEqual([]);
   });
 
-  it("le thème parent est déduit de la phase courante", () => {
+  it("le thème parent est déduit du niveau courant", () => {
     expect(resolveThemeIdForStage(themes, "stage-2")).toBe("theme-2");
     expect(resolveThemeIdForStage(themes, "")).toBe("");
     expect(resolveThemeIdForStage(themes, "stage-fantome")).toBe("");
   });
 
-  it("changer de thème réinitialise une phase devenue incompatible", () => {
+  it("changer de thème réinitialise un niveau devenu incompatible", () => {
     expect(resolveStageAfterThemeChange(themes, "theme-1", "stage-1")).toBe(
       "stage-1",
     );
@@ -502,11 +534,37 @@ describe("Admin UI — classement Missions et avatars (lot N1)", () => {
     expect(resolveStageAfterThemeChange(themes, "theme-1", "")).toBe("");
   });
 
-  it("une phase ou un thème archivé n'est plus proposé comme cible", () => {
+  it("un niveau ou un thème archivé n'est plus proposé comme cible", () => {
     const theme = themes[0]!;
     expect(isStageSelectable(theme, theme.stages[0]!)).toBe(true);
     expect(isStageSelectable(theme, theme.stages[1]!)).toBe(false);
     expect(isStageSelectable(themes[1]!, themes[1]!.stages[0]!)).toBe(false);
+  });
+
+  it("niveaux occupés ne sont plus sélectionnables (sauf niveau courant)", () => {
+    const occupied = collectOccupiedStageIds(
+      [
+        { id: "ex-on-stage-1", missionStageId: "stage-1" },
+        { id: "ex-other", missionStageId: "stage-free" },
+      ],
+      "ex-edit",
+    );
+    expect(occupied.has("stage-1")).toBe(true);
+    expect(occupied.has("stage-free")).toBe(true);
+
+    const theme = themes[0]!;
+    expect(
+      isStageSelectable(theme, theme.stages[0]!, {
+        occupiedStageIds: occupied,
+        currentStageId: undefined,
+      }),
+    ).toBe(false);
+    expect(
+      isStageSelectable(theme, theme.stages[0]!, {
+        occupiedStageIds: occupied,
+        currentStageId: "stage-1",
+      }),
+    ).toBe(true);
   });
 
   it("libellé de classement : « Non classé » pour les exercices legacy", () => {

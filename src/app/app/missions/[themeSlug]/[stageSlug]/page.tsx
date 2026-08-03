@@ -1,8 +1,12 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { requireTelepro } from "@/lib/auth";
+import { ExerciseMissionStatus } from "@/lib/teleproMissions";
 import { loadTeleproMissionStageView } from "@/lib/teleproMissionsService";
-import { MissionsPath } from "../../MissionsPath";
 
+/**
+ * Route de compatibilité : ne contourne pas les verrous.
+ * Débloqué + exercice valide → préparation ; verrouillé → thème ; absent → 404.
+ */
 export default async function MissionStagePage({
   params,
 }: {
@@ -18,11 +22,17 @@ export default async function MissionStagePage({
   );
   if (!result) notFound();
 
-  return (
-    <MissionsPath
-      mode="stage"
-      theme={result.theme}
-      stage={result.stage}
-    />
-  );
+  const { theme, stage } = result;
+  const exercise = stage.exercises[0] ?? null;
+  if (!exercise) notFound();
+
+  const locked =
+    stage.state === "LOCKED" ||
+    exercise.status === ExerciseMissionStatus.LOCKED;
+
+  if (locked) {
+    redirect(`/app/missions/${theme.slug}`);
+  }
+
+  redirect(`/app/prepare/${exercise.id}`);
 }

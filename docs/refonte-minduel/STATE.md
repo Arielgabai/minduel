@@ -726,3 +726,48 @@ Toutes les routes API sont protégées par `requirePlatformAdmin`. Enveloppes `{
 
 - **Aucune** migration / base / seed / backfill / OpenAI / réseau / simulation / micro / WebRTC réel.
 - **Aucun** commit.
+
+---
+
+## Lot N4 — Un exercice = un niveau (03/08/2026)
+
+**Objectif unique :** Thème → Niveau avec **un exercice = un niveau**, catalogue entièrement dynamique, admin + télépro + migration de suivi — **sans exécuter la migration N4**.
+
+### Livré
+
+- Logique finale : un exercice = un niveau (`MissionStage.scenario Scenario?` + `@@unique([missionStageId, organizationId])`).
+- Nombre de thèmes et de niveaux entièrement configurable (aucun plafond métier 5 thèmes / 7 niveaux).
+- `MissionStage` conservé techniquement, présenté partout comme **Niveau** ; `Scenario.level` libellé **Difficulté**.
+- Migration de suivi écrite : `prisma/migrations/20260804100000_mission_stage_single_scenario` (garde anti-doublons + index unique ; NULL autorisés ; aucun INSERT/UPDATE/seed/backfill).
+- Admin `/admin/missions` : arbre Thème → Niveau → exercice, association/retrait, checklist readiness, publish gates.
+- Télépro : page thème = parcours portraits (p.15) ; route stage historique = redirect prepare / thème sans bypass verrou ; legacy « Parcours existant » = 1 nœud / exercice.
+- Déblocage dynamique par thème (`levelNumber` → `sortOrder` → ordre déterministe) ; trous non bloquants ; `COMPLETED` / `IN_PROGRESS` prioritaires.
+
+### Vérifications
+
+| Contrôle | Résultat |
+|---|---|
+| Batterie ciblée N4/N1/N2 | OK — **158** / 158 (~9 s) |
+| `npm test` (suite complète) | OK — **512** / 512 (~20 s) |
+| `npx prisma validate` | OK |
+| `npx tsc --noEmit` | OK |
+| `npm run lint --if-present` | OK (exit 0) |
+| `npm run build` | OK — routes missions thème/stage + admin missions générées |
+| `git diff --check` | OK (warnings LF/CRLF autocrlf uniquement) |
+| Migration N4 | **Écrite, NON exécutée** |
+| Migration N1 | Contenu **inchangé** ; déjà appliquée en production selon ops (hors scope N4) |
+| `package.json` / lock | **Inchangés** |
+
+### Risques restants
+
+- Doublons `(missionStageId, organizationId)` éventuels en base bloqueront le `RAISE` N4 au moment de l'appliquer (aucune correction auto).
+- Appliquer N4 **après** déploiement applicatif qui refuse déjà le 2ᵉ exercice (409).
+- Smoke manuel admin (association 1:1, publish readiness) et télépro (portraits, redirect stage) encore à faire.
+- `tests/lotL.test.ts` adapté hors allowlist initiale (assertions source `MissionsPath` devenues obsolètes) pour garder `npm test` vert.
+
+### Confirmations
+
+- **Aucune** exécution de migration N4 / seed / backfill / base réelle / production / Render.
+- **Aucun** appel OpenAI / réseau externe / simulation / micro / WebRTC.
+- **Aucun** commit / push / PR.
+- **Aucune** affirmation que la migration N4 a été appliquée en production.

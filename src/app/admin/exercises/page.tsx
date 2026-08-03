@@ -186,7 +186,7 @@ export default function AdminExercisesPage() {
             </select>
           </label>
           <label className="block text-xs text-[#9AA1B2]">
-            Niveau de mission
+            Ordre legacy
             <input
               type="number"
               min={1}
@@ -226,7 +226,7 @@ export default function AdminExercisesPage() {
             </select>
           </label>
           <label className="block text-xs text-[#9AA1B2]">
-            Phase
+            Niveau
             <select
               value={missionStageId}
               disabled={
@@ -235,7 +235,7 @@ export default function AdminExercisesPage() {
               onChange={(e) => setMissionStageId(e.target.value)}
               className="mt-1 w-full rounded-xl border border-[#1e222c] bg-[#12151d] px-3 py-2 text-sm text-white disabled:opacity-50"
             >
-              <option value="">Toutes</option>
+              <option value="">Tous</option>
               {stageOptions.map((stage) => (
                 <option key={stage.id} value={stage.id}>
                   N{stage.levelNumber} — {stage.name}
@@ -266,10 +266,10 @@ export default function AdminExercisesPage() {
                 <th className="px-4 py-3">Nom</th>
                 <th className="px-4 py-3">Slug</th>
                 <th className="px-4 py-3">Statut</th>
-                <th className="px-4 py-3">Niveau</th>
-                <th className="px-4 py-3">Mission</th>
+                <th className="px-4 py-3">Difficulté</th>
+                <th className="px-4 py-3">Ordre legacy</th>
                 <th className="px-4 py-3">Thème</th>
-                <th className="px-4 py-3">Phase</th>
+                <th className="px-4 py-3">Niveau</th>
                 <th className="px-4 py-3">Avatar</th>
                 <th className="px-4 py-3">Ordre</th>
                 <th className="px-4 py-3">Maj</th>
