@@ -1,20 +1,22 @@
 # RELEASE RUNBOOK — Minduel MVP V2 (gate final)
 
-**Décision gate :** GO local — GO production **conditionnel** aux vérifications manuelles Render et aux points d'arrêt de ce runbook.
+**État courant :** **GO production validé — Minduel MVP V2 déployé et smoke testé avec succès le 2 août 2026.**
 
 | Élément | Valeur |
 |---------|--------|
-| Commit cible `<target-commit>` | `9d9b38bc1293c2f5d2171ba1b632fb8b5e61919c` |
-| Commit production précédent `<previous-production-commit>` | `ae61df7db304e51cfc19df86d4959bd6a8f7d262` (**à revérifier dans le dashboard Render**) |
-| Branche locale du gate | `release/minduel-mvp-v2` (sans upstream configuré) |
-| Branche déployée par Render (documentée) | `main` — **à revérifier dans le dashboard** |
-| `main`, `minduel/main` et la cible | Même SHA (`0 0` d'écart, vérifié localement) |
-| Delta production → cible | 14 commits, 50 fichiers, 1 migration ajoutée |
-| Date du gate | 02/08/2026 |
+| Commit applicatif déployé | `9d9b38bc1293c2f5d2171ba1b632fb8b5e61919c` |
+| Commit production précédent | `ae61df7db304e51cfc19df86d4959bd6a8f7d262` |
+| Branche Render | `main` |
+| Branche documentaire locale | `release/minduel-mvp-v2` (clôture documentaire — **non déployée**) |
+| Delta production → cible (gate) | 14 commits, 50 fichiers, 1 migration ajoutée |
+| Date du gate préalable | 02/08/2026 |
+| Date d'exécution / clôture | 02/08/2026 |
+| Décision préalable (gate) | GO local — GO production **conditionnel** (voir §G.2) |
+| Décision finale (après exécution) | **GO production validé** (voir §I) |
 
 > Procédure Render exécutable et réversible, **sans coût OpenAI**.
-> **Aucune commande de ce runbook n'a été exécutée contre une base réelle.** Aucun déploiement, aucune migration, aucun seed, aucun backfill, aucune promotion, aucun appel réseau externe.
-> Les commandes opérationnelles sont marquées **« À NE PAS EXÉCUTER DANS CE LOT »**.
+> Les sections §A–§H conservent la trace du gate **avant** déploiement (préconditions, points d'arrêt, commandes marquées **« À NE PAS EXÉCUTER DANS CE LOT »**).
+> Le compte rendu d'exécution réelle est en **§I**. Cette mise à jour documentaire **ne déclenche aucun nouveau déploiement**.
 
 ---
 
@@ -209,22 +211,22 @@ Post-déploiement, **aucune** simulation nouvelle, **aucun** micro, **aucun** ap
 
 | # | Test | Attendu | OK ? |
 |---|------|---------|------|
-| 1 | `GET /api/health` | `200`, `status: ok`, `db: up` | |
-| 2 | Accès anonyme aux routes protégées | Redirection login ; aucune donnée exposée | |
-| 3 | Login `TELEPRO` | Shell 5 destinations (Accueil, Missions, Skills, Progression, Profil) | |
-| 4 | Login `MANAGER` | Espace manager accessible ; pas de lien Administration | |
-| 5 | Login `PLATFORM_ADMIN` | Lien Administration présent ; `/admin` accessible | |
-| 6 | `/admin` et `/api/admin/*` avec un compte MANAGER puis TELEPRO | Refus strict (`403` / redirection), aucune fuite de prompt | |
-| 7 | Missions dynamiques | Niveaux, statuts, verrouillage, recommandation issus des exercices réellement assignés ; aucun compteur figé ; verrouillé = aucun lien lançable | |
-| 8 | `/app/skills` (télépro) | État vide explicite si aucun contenu publié, sinon uniquement les contenus `PUBLISHED` | |
-| 9 | `/admin/skills` | Création d'une catégorie/section/article **DRAFT**, modification, puis **suppression du DRAFT** | |
-| 10 | Aucun contenu de test publié | Aucun `publish` sans la décision manuelle §E.3 | |
-| 11 | Débrief existant `/app/analysis/<id>` | 4 onglets (Résumé, Ligne par ligne, Pourquoi, Comparatif) ; états vides explicites ; **aucun recalcul** | |
-| 12 | Liens Skills dans le débrief | Présents **uniquement** si des mappings vers des articles publiés existent ; sinon absents (jamais inventés) | |
-| 13 | `/app/progression` | 4 onglets (Tendances, Comparatif, Diagnostic, Badges) ; états vides si données insuffisantes | |
-| 14 | `/app/call/<id>/done` sur une **simulation historique existante** | Écran de fin lisible et rechargeable ; **aucun appel à `/end`** ; `404` pour une simulation d'un autre télépro | |
-| 15 | Historique et débriefs existants | Toujours accessibles, contenus inchangés | |
-| 16 | Exercice archivé | Toujours masqué côté télépro | |
+| 1 | `GET /api/health` | `200`, `status: ok`, `db: up` | **OK** (voir §I) |
+| 2 | Accès anonyme aux routes protégées | Redirection login ; aucune donnée exposée | **OK** |
+| 3 | Login `TELEPRO` | Shell 5 destinations (Accueil, Missions, Skills, Progression, Profil) | **OK** |
+| 4 | Login `MANAGER` | Espace manager accessible ; pas de lien Administration | **OK** |
+| 5 | Login `PLATFORM_ADMIN` | Lien Administration présent ; `/admin` accessible | **OK** |
+| 6 | `/admin` et `/api/admin/*` avec un compte MANAGER puis TELEPRO | Refus strict (`403` / redirection), aucune fuite de prompt | **OK** |
+| 7 | Missions dynamiques | Niveaux, statuts, verrouillage, recommandation issus des exercices réellement assignés ; aucun compteur figé ; verrouillé = aucun lien lançable | **OK** |
+| 8 | `/app/skills` (télépro) | État vide explicite si aucun contenu publié, sinon uniquement les contenus `PUBLISHED` | **OK** (bibliothèque sans erreur) |
+| 9 | `/admin/skills` | Création d'une catégorie/section/article **DRAFT**, modification, puis **suppression du DRAFT** | **OK** |
+| 10 | Aucun contenu de test publié | Aucun `publish` sans la décision manuelle §E.3 | **OK** |
+| 11 | Débrief existant `/app/analysis/<id>` | 4 onglets (Résumé, Ligne par ligne, Pourquoi, Comparatif) ; états vides explicites ; **aucun recalcul** | **OK** |
+| 12 | Liens Skills dans le débrief | Présents **uniquement** si des mappings vers des articles publiés existent ; sinon absents (jamais inventés) | **OK** |
+| 13 | `/app/progression` | 4 onglets (Tendances, Comparatif, Diagnostic, Badges) ; états vides si données insuffisantes | **OK** |
+| 14 | `/app/call/<id>/done` sur une **simulation historique existante** | Écran de fin lisible et rechargeable ; **aucun appel à `/end`** ; `404` pour une simulation d'un autre télépro | **OK** |
+| 15 | Historique et débriefs existants | Toujours accessibles, contenus inchangés | **OK** |
+| 16 | Exercice archivé | Toujours masqué côté télépro | **OK** (archivage + disparition de l'accueil télépro) |
 
 **Étape 14 :** n'utiliser qu'un identifiant de simulation **déjà terminé**. Si aucun identifiant historique n'est disponible, marquer le point **« non testable sans nouvelle simulation »** et le laisser non coché — ne pas créer de simulation pour le tester.
 
@@ -256,15 +258,19 @@ Sans option choisie par écrit ⇒ appliquer **E3-A** par défaut.
 
 ### F.1 Rollback applicatif (voie normale)
 
+Ordre obligatoire d'un rollback éventuel **après** cette release : **web d'abord, puis worker** (inverse du déploiement).
+
 1. Render → **Web Service** → **Deploys** → **Rollback** vers `ae61df7db304e51cfc19df86d4959bd6a8f7d262`.
 2. Render → **Background Worker** → **Deploys** → **Rollback** vers le **même** `ae61df7…`.
 3. Vérifier `/api/health` → `200`, `db: up`, puis les logs worker (`worker.start`, `worker.heartbeat`).
 4. **Toujours préférer le rollback applicatif à toute restauration de base.**
+5. Ne **pas** supprimer automatiquement les tables Skills ni aucun contenu Skills lors du rollback applicatif.
 
 ### F.2 La migration Skills reste en place
 
 * Ne **jamais** rollback automatiquement `20260802100000_skills_library`.
 * Elle est purement additive : quatre tables neuves, aucun `ALTER` sur une table existante.
+* **Migration Skills additive à conserver** en cas de rollback applicatif (déjà appliquée en production — voir §I).
 * L'ancien web **ignore** totalement ces tables : leur présence est sans effet sur lui.
 * Ne **pas** supprimer automatiquement les tables Skills, ni les `PromptBundle`, ni les articles ou mappings créés.
 * Le SQL de rollback manuel figure en en-tête du fichier de migration (`DROP TABLE` enfants → parents). C'est un **dernier recours**, soumis à accord explicite, et il détruit définitivement le contenu Skills.
@@ -296,9 +302,9 @@ Simulations, transcripts, évaluations, débriefs, scores de compétences, histo
 | Migration Skills | Additive, conforme au schéma, non exécutée | — |
 | Secrets suivis | Aucun secret réel détecté | — |
 
-### G.2 GO production — **conditionnel**
+### G.2 GO production — **conditionnel** (décision préalable du gate)
 
-La production n'est pas prête tant que **toutes** les conditions suivantes ne sont pas vérifiables et vérifiées :
+Trace historique du gate **avant** exécution. La production n'était pas prête tant que **toutes** les conditions suivantes n'étaient pas vérifiables et vérifiées :
 
 | # | Condition | Vérifiable par |
 |---|-----------|----------------|
@@ -314,7 +320,7 @@ La production n'est pas prête tant que **toutes** les conditions suivantes ne s
 | G2.10 | Health web `200` / `db: up` après bascule | `/api/health` |
 | G2.11 | Smoke §E sans régression auth / rôles / débrief | Checklist remplie |
 
-### G.3 NO-GO immédiat si
+### G.3 NO-GO immédiat si (critères du gate préalable)
 
 * le Pre-Deploy réel du service déployé en premier n'est pas confirmé ;
 * le commit affiché par Render n'est pas **exactement** `9d9b38bc1293c2f5d2171ba1b632fb8b5e61919c` ;
@@ -323,7 +329,12 @@ La production n'est pas prête tant que **toutes** les conditions suivantes ne s
 * `prisma migrate status` signale un drift ou une migration inattendue ;
 * une régression d'authentification, de rôle ou d'isolation d'organisation est constatée au smoke.
 
+### G.4 Décision finale après exécution
+
+**GO production validé** — voir le compte rendu §I (déploiement réel du 2 août 2026, smoke réussi).
+
 ---
+
 
 ## Matrice des variables d'environnement
 
@@ -414,7 +425,9 @@ La production n'est pas prête tant que **toutes** les conditions suivantes ne s
 
 ## Audit de la migration Skills — `20260802100000_skills_library`
 
-**Non exécutée.** Ni `migrate dev`, ni `migrate deploy`, ni `db push`, ni contre une base locale, ni contre une base distante.
+**État au gate (avant déploiement) :** non exécutée dans le lot documentaire préalable. Ni `migrate dev`, ni `migrate deploy`, ni `db push` n'avaient été lancés depuis ce lot.
+
+**État après exécution production (§I) :** migration **appliquée** par le Pre-Deploy du worker (`npm run db:migrate:deploy`) ; Pre-Deploy web ensuite : `no pending migrations to apply`.
 
 | Contrôle | Résultat |
 |----------|----------|
@@ -471,11 +484,97 @@ La production n'est pas prête tant que **toutes** les conditions suivantes ne s
 
 ---
 
+## I. Compte rendu d'exécution — production
+
+**Décision finale :** **GO production validé** — Minduel MVP V2 déployé et smoke testé avec succès le **2 août 2026**.
+
+Distinction explicite :
+
+| Étape | Décision |
+|-------|----------|
+| Gate préalable (LOT RELEASE V2) | GO local — GO production **conditionnel** (§G.2) |
+| Après exécution réelle | **GO production validé** (cette section) |
+
+Cette clôture documentaire **n'est pas un nouveau déploiement**. La branche documentaire `release/minduel-mvp-v2` **n'a pas été déployée** ; le commit applicatif déployé via Render (`main`) est celui ci-dessous.
+
+### I.1 Commit et services
+
+| Élément | Constat |
+|---------|---------|
+| Commit réellement déployé | `9d9b38bc1293c2f5d2171ba1b632fb8b5e61919c` |
+| Branche Render | `main` |
+| Ordre | **Worker d'abord**, puis **web** (même commit) |
+| Worker | Build OK → Pre-Deploy OK → **Live** ; `worker.start` et heartbeat observés |
+| Web | Build OK → Pre-Deploy OK → **Live** |
+| Auto-Deploy | **Toujours OFF** (web et worker) |
+
+### I.2 Sauvegarde PostgreSQL
+
+| Élément | Constat |
+|---------|---------|
+| Export terminé | Oui |
+| Horodatage | `2026-08-02T04_05` |
+| Export téléchargé | Oui |
+| Taille | Non nulle |
+| Base | `Available` |
+| PITR | Disponible (fenêtre 3 jours) |
+| Restore | Action « Restore Database » disponible |
+
+Aucune URL, chaîne de connexion ni secret documenté ici.
+
+### I.3 Migrations
+
+| Service | Pre-Deploy | Résultat |
+|---------|------------|----------|
+| Worker | `npm run db:migrate:deploy` | **Réussi** — migration Skills `20260802100000_skills_library` **appliquée** |
+| Web | `npm run db:migrate:deploy` | **Réussi** — `no pending migrations to apply` |
+
+Aucun seed Skills, aucun backfill Skills.
+
+### I.4 Health check observé
+
+| Champ | Valeur |
+|-------|--------|
+| `status` | `ok` |
+| `db` | `up` |
+| `pending` | `0` |
+| `running` | `0` |
+| `failed` | `2` |
+
+Les deux jobs en échec constituent une **baseline historique à surveiller**. Ils ne sont **ni résolus** ni **créés** par cette release. Health considéré **valide et non bloquant**.
+
+### I.5 Smoke test V2
+
+Confirmé réussi par l'opérateur. **Aucun** appel, micro, nouvelle simulation ni traitement OpenAI lancé pendant la validation.
+
+Contrôles validés (sans inventer d'identifiant, slug, titre ou donnée métier) :
+
+* accès anonyme et protections de rôles ;
+* accès TELEPRO, MANAGER et PLATFORM_ADMIN ;
+* shell télépro ;
+* Missions dynamiques ;
+* bibliothèque Skills sans erreur ;
+* administration Skills ;
+* débrief en quatre onglets ;
+* Progression en quatre vues ;
+* écran `/app/call/[id]/done` sur une simulation historique ;
+* historique et débrief existants ;
+* archivage et disparition de l'accueil télépro.
+
+Checklist §E.1 : contrôles exécutés marqués **OK**.
+
+### I.6 Rollback post-release (rappel)
+
+* Rollback applicatif éventuel : **web puis worker**, vers `ae61df7…`.
+* Migration Skills additive **conservée** ; aucune suppression automatique des tables ou contenus Skills.
+* Restauration de base = dernier recours uniquement (export `2026-08-02T04_05` / PITR).
+
+---
+
 ## Prochaines actions manuelles
 
-1. Relire le diff documentaire de ce lot (deux fichiers).
-2. Confirmer dans le dashboard Render **chacun** des points de §B (branche, commit déployé, Dockerfile, Pre-Deploy réel, Start Command, health, auto-deploy, flags).
-3. Réaliser et **terminer** un export PostgreSQL frais ; vérifier le point-in-time recovery.
-4. Décider par écrit de l'option §E.3.
-5. Dérouler §D.3 dans l'ordre, sans jamais déclencher les deux services simultanément.
-6. Remplir la checklist §E puis consigner les preuves (deploy IDs, extraits de logs sans secret).
+1. Relire le diff documentaire RELEASE-CLOSE (deux fichiers) puis commit documentaire dédié si souhaité.
+2. Surveiller la baseline health `failed: 2` (historique, non créée par V2).
+3. Conserver Auto-Deploy **OFF** jusqu'à décision ops contraire.
+4. En cas de rollback : §F — web d'abord, puis worker ; ne pas supprimer les tables Skills.
+5. **Aucun nouveau déploiement** requis pour cette mise à jour documentaire.
