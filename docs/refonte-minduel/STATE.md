@@ -2,7 +2,7 @@
 
 **Dernière mise à jour :** 03/08/2026
 
-**Statut courant du gate :** **Production V2 déployée et smoke testée — GO production validé.**
+**Statut courant du gate :** **GO local — GO production conditionnel** (LOT RELEASE N1–N3, cible `69c4b5e0…`). La production V2 historique reste documentée ci-dessous ; elle doit être **reconfirmée** dans Render avant tout redéploiement.
 
 ## Statut des documents
 
@@ -13,7 +13,7 @@
 | Plan admin exercices | `docs/refonte-minduel/02-PLAN_ADMIN_EXERCICES.md` | Validé §12 |
 | Audit terrain Ruben | `docs/refonte-minduel/references/audit_minduel_ruben_2026-07-29.md` | Disponible |
 | Maquette HTML | `docs/refonte-minduel/references/minduel webapp mvp.html` | Référence UX (non prod) |
-| Release runbook | `docs/refonte-minduel/RELEASE_RUNBOOK.md` | LOT RELEASE-CLOSE — **GO production validé** (V2 déployé + smoke OK) |
+| Release runbook | `docs/refonte-minduel/RELEASE_RUNBOOK.md` | LOT RELEASE N1–N3 — **GO local — GO production conditionnel** |
 
 ## Stack confirmée (une ligne)
 
@@ -725,4 +725,60 @@ Toutes les routes API sont protégées par `requirePlatformAdmin`. Enveloppes `{
 ### Confirmations
 
 - **Aucune** migration / base / seed / backfill / OpenAI / réseau / simulation / micro / WebRTC réel.
+- **Aucun** commit.
+
+---
+
+## LOT RELEASE N1–N3 — Gate de redéploiement (03/08/2026)
+
+**Objectif unique :** déterminer si le commit `69c4b5e0c832945292ae8eb90d358d9b37788619` est prêt à être déployé sur Render. Lot **exclusivement local et documentaire**.
+
+### Cible et delta
+
+| Élément | Constat |
+|---------|---------|
+| Cible | `69c4b5e0c832945292ae8eb90d358d9b37788619` |
+| Production vérifiée **historiquement** | `9d9b38bc1293c2f5d2171ba1b632fb8b5e61919c` — **à confirmer manuellement dans Render** |
+| Branche locale | `release/minduel-missions-skills-v3` (aucun upstream) |
+| `minduel/main` | Même SHA que la cible (`0 0`) |
+| Delta | 9 commits, 55 fichiers (+8534 / −835) |
+| Lots | N1 catalogue Missions ; N2 parcours télépro + 10 avatars + nav basse ; N3 création guidée Skills |
+| Migration ajoutée | `20260803112000_mission_catalog` (**encore non exécutée**) |
+| Deploy files | `package.json`, lockfile, `Dockerfile`, `next.config.ts`, `src/lib/env.ts` **inchangés** |
+
+### Vérifications locales (exécutées)
+
+| Commande | Exit | Résultat | Durée approx. |
+|----------|------|----------|---------------|
+| `npm test` | 0 | **482** tests / **28** fichiers | ~22 s |
+| `npx tsc --noEmit` | 0 | OK | ~14 s |
+| `npm run lint --if-present` | 0 | No ESLint warnings or errors | ~19 s |
+| `npx prisma validate` | 0 | Schéma valide | ~11 s |
+| `npm run build` | 0 | **35/35** pages ; `/admin/missions`, missions thématiques, skills | ~80 s |
+| `git diff --check` | 0 | OK | — |
+
+Aucun réseau externe / OpenAI / migration / seed / base réelle.
+
+### Décision du gate
+
+**GO local — GO production conditionnel.**
+
+GO production reste conditionnel aux vérifications manuelles Render (Auto-Deploy OFF, Pre-Deploy, export frais, PITR, même SHA worker→web) détaillées dans le runbook.
+
+### Runbook
+
+`docs/refonte-minduel/RELEASE_RUNBOOK.md` — section **LOT RELEASE N1–N3**.
+
+### Opérations manuelles restantes
+
+1. Confirmer dans Render le commit actuellement déployé (ne pas affirmer `9d9b38bc…` sans relevé).
+2. Export PostgreSQL frais (téléchargé, taille non nulle) + PITR + DB Available.
+3. Confirmer Auto-Deploy OFF, Pre-Deploy `npm run db:migrate:deploy`, Start Commands, health `/api/health`.
+4. Déployer **worker seul** sur la cible → migration N1 → Live + heartbeat → **web** même SHA → health → smoke.
+5. Aucun seed / backfill / promotion ; flags ops absents ou `false`.
+6. Ne pas déployer les deux services simultanément.
+
+### Confirmations de ce lot gate
+
+- **Aucune** production / base / migration / seed / backfill / OpenAI / Render touchée.
 - **Aucun** commit.

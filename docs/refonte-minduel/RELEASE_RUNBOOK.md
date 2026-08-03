@@ -1,6 +1,275 @@
-# RELEASE RUNBOOK — Minduel MVP V2 (gate final)
+# RELEASE RUNBOOK — Minduel
 
-**État courant :** **GO production validé — Minduel MVP V2 déployé et smoke testé avec succès le 2 août 2026.**
+## LOT RELEASE N1–N3 — Gate de redéploiement (03/08/2026)
+
+**État courant du gate :** **GO local — GO production conditionnel.**
+
+| Élément | Valeur |
+|---------|--------|
+| Commit cible | `69c4b5e0c832945292ae8eb90d358d9b37788619` |
+| Dernière production vérifiée **historiquement** | `9d9b38bc1293c2f5d2171ba1b632fb8b5e61919c` — **à confirmer manuellement dans Render avant déploiement** |
+| Branche locale du gate | `release/minduel-missions-skills-v3` (**aucun upstream**) |
+| `minduel/main` | Même SHA que la cible (`0 0` d'écart) |
+| Branche Render attendue | `main` (à confirmer dans le dashboard) |
+| Delta historique prod → cible | 9 commits, 55 fichiers, **1** migration ajoutée (`20260803112000_mission_catalog`) |
+| Lots inclus | N1 (catalogue Missions), N2 (parcours télépro + avatars + nav), N3 (création guidée Skills) |
+| Date du gate | 03/08/2026 |
+| Décision | **GO local — GO production conditionnel** |
+| Migration N1 | **Créée, non exécutée** dans ce lot (ni localement, ni en production) |
+
+> Lot **exclusivement local et documentaire**. Aucun déploiement, migration, seed, backfill, promotion, Render, base réelle ou OpenAI n'a été touché.
+> La production historique `9d9b38bc…` n'est **pas** affirmée comme encore vraie sans vérification dashboard.
+
+### N.A Préconditions manuelles (obligatoires avant toute action Render)
+
+Toutes obligatoires. Une seule case non satisfaite ⇒ **STOP**.
+
+| # | Précondition | Vérification | OK ? |
+|---|--------------|--------------|------|
+| NA1 | Commit cible exact `69c4b5e0c832945292ae8eb90d358d9b37788619` | SHA complet relevé | |
+| NA2 | Commit actuellement déployé relevé dans Render (web **et** worker) | **Relevé dashboard**, pas depuis la doc ; historique attendu `9d9b38bc…` **si inchangé** | |
+| NA3 | Branche Render = `main` et contient la cible | Dashboard + GitHub | |
+| NA4 | Export PostgreSQL **frais** terminé, téléchargé, taille **non nulle** | Identifiant + horodatage notés | |
+| NA5 | PITR visible / disponible | Dashboard PostgreSQL | |
+| NA6 | Base PostgreSQL statut **Available** | Dashboard | |
+| NA7 | Web **sans** déploiement en cours | Onglet Deploys | |
+| NA8 | Worker **sans** déploiement en cours | Onglet Deploys | |
+| NA9 | Dernier heartbeat worker normal | Logs `worker.heartbeat` | |
+| NA10 | Auto-Deploy **OFF** sur web **et** worker | Chaque service | |
+| NA11 | Pre-Deploy exact `npm run db:migrate:deploy` sur **les deux** services | Champ réel UI | |
+| NA12 | Start Commands exactes | Web `npm run start` ; worker `npm run worker` | |
+| NA13 | Health web `/api/health` | Champ UI | |
+| NA14 | Aucun flag ops actif (`ALLOW_*` absents ou `false`) | Noms seuls | |
+| NA15 | Accès dashboard + logs (web, worker, base) | Connexion effective | |
+| NA16 | Dockerfile `./Dockerfile` | Runtime Docker confirmé | |
+
+### N.B Gate dashboard — état connu à confirmer
+
+| Champ | Attendu (dépôt / historique) | À confirmer dans Render |
+|-------|------------------------------|-------------------------|
+| Branche | `main` | |
+| Auto-Deploy | OFF (web + worker) | |
+| Dockerfile | `./Dockerfile` | |
+| Pre-Deploy | `npm run db:migrate:deploy` | |
+| Start web | `npm run start` | |
+| Start worker | `npm run worker` | |
+| Health web | `/api/health` | |
+| PostgreSQL | Available ; PITR historiquement disponible ; **nouvel export obligatoire** | |
+
+`render.yaml` : **absent** du dépôt — seule l'UI Render fait foi (`docs/deployment-render.md`).
+
+### N.C Commandes « À NE PAS EXÉCUTER DANS CE LOT »
+
+Aucune de ces commandes n'a été exécutée dans ce lot gate.
+
+```bash
+# À NE PAS EXÉCUTER DANS CE LOT
+npx prisma migrate status
+```
+
+Attendu **avant** bascule worker : migrations historiques appliquées ; `20260803112000_mission_catalog` **en attente**.
+Attendu **après** Pre-Deploy worker : migration N1 appliquée ; aucune en attente.
+
+```bash
+# À NE PAS EXÉCUTER DANS CE LOT
+# Uniquement si Pre-Deploy worker non confirmé et one-off image cible disponible
+npm run db:migrate:deploy
+```
+
+```bash
+# À NE PAS EXÉCUTER DANS CE LOT
+npx prisma validate
+```
+
+```bash
+# NE PAS LANCER (interdits pour cette release)
+npm run db:seed:demo
+npm run db:seed:exercises
+npm run db:backfill-prompt-bundles -- --org-slug=<org-slug> --apply
+npm run db:promote-admin -- --email=<admin-email>
+npm run db:reset
+npx prisma db push
+```
+
+**Aucun** seed Missions, **aucun** backfill Mission, **aucun** backfill Skills. La migration N1 est additive et ne crée aucune donnée.
+
+### N.D Ordre Render qualifié — worker puis web
+
+**Les deux services ne doivent jamais être déclenchés simultanément** (deux `prisma migrate deploy` concurrents).
+
+| # | Étape | Preuve | STOP si |
+|---|-------|--------|---------|
+| ND1 | Export PostgreSQL frais téléchargé | Horodatage + taille non nulle | Export absent/ancien |
+| ND2 | Confirmer PITR | Dashboard | PITR indisponible |
+| ND3 | Auto-Deploy OFF (web + worker) | Relevé | Auto-Deploy ON |
+| ND4 | Confirmer commandes réelles (Pre-Deploy / Start / Health) | UI | Pre-Deploy absent / différent |
+| ND5 | **Déployer le worker seul** sur `69c4b5e0…` | Deploy ID + SHA | Cible différente |
+| ND6 | Pre-Deploy worker applique migration N1 | Journal `prisma migrate deploy` | Erreur SQL / drift |
+| ND7 | Worker Live + heartbeat | Logs | Worker non Live / heartbeat absent |
+| ND8 | **Déployer le web** sur **exactement le même** SHA | Deploy ID + SHA | SHA différent |
+| ND9 | Pre-Deploy web : aucune migration restante | « No pending migrations » | Migration inattendue / échec |
+| ND10 | Web Live + `/api/health` OK | `200`, `db: up` | Health non OK |
+| ND11 | Smoke §N.E | Checklist | Régression / fuite / admin hors PLATFORM_ADMIN |
+
+**Pourquoi worker d'abord :** le worker ne référence **aucune** table `MissionTheme` / `MissionStage` (vérifié dans `src/worker/` et `src/lib/jobs.ts`) ; il démarre avant ou après la migration. Le nouveau web exige la migration pour `/admin/missions` et les pages Missions catégorisées.
+
+**STOP alternatif :** si le worker dépend finalement des nouvelles tables **ou** si son Pre-Deploy n'est **pas** confirmé dans le dashboard → ne pas suivre ND5–ND7 ; documenter une stratégie one-off / web-seul avec Pre-Deploy confirmé avant bascule trafic.
+
+### N.E Smoke sans OpenAI (checklist — non exécutée dans ce lot)
+
+#### N.E.1 Smoke sans écriture significative
+
+| # | Test | Attendu | OK ? |
+|---|------|---------|------|
+| 1 | `GET /api/health` | `200`, `db: up` | |
+| 2 | Login anonyme | Redirection ; aucune donnée exposée | |
+| 3 | TELEPRO | Shell + destinations | |
+| 4 | MANAGER | Espace manager ; pas d'Administration | |
+| 5 | PLATFORM_ADMIN | `/admin` accessible | |
+| 6 | Refus `/admin` TELEPRO/MANAGER | `403` / redirection | |
+| 7 | `/admin/missions` admin | Accessible | |
+| 8 | Exercices existants | Visibles comme **non classés** | |
+| 9 | `/app/missions` | Affiche `Parcours existant` | |
+| 10 | Navigation basse | Toujours visible (hors prepare/call/done/analysis) | |
+| 11 | Ancienne page analysis | Navigation absente | |
+| 12 | `/app/skills` | Fonctionne | |
+| 13 | Article Skills publié historique | Lisible | |
+| 14 | Historique / débrief existant | Accessible | |
+
+#### N.E.2 Smoke complet (optionnel, org de démonstration uniquement)
+
+Action manuelle **explicitement autorisée**, **jamais** sur une organisation cliente réelle. Aucun OpenAI, micro ni simulation.
+
+1. Créer un thème DRAFT ; 2. créer une phase DRAFT ; 3. publier thème puis phase ; 4. créer/utiliser un exercice de test ; 5. sélectionner un avatar ; 6. saisir une personnalité non sensible ; 7. classer l'exercice ; 8. assigner à un télépro de démo ; 9. publier avec PromptBundle local valide ; 10. vérifier thème → phase → parcours ; 11. vérifier avatar sur préparation ; 12. **ne pas** démarrer l'appel ; 13. créer/compléter un article Skills DRAFT ; 14. publier explicitement les parents ; 15. `Enregistrer et publier` ; 16. vérifier côté télépro ; 17. archiver les données de test si nécessaire.
+
+### N.F Rollback
+
+1. Rollback **web** vers le commit de production précédent (relevé dashboard ; historique `9d9b38bc…` si confirmé).
+2. Rollback **worker** ensuite, même SHA.
+3. Migration N1 **additive conservée** — ne pas la rollback automatiquement.
+4. Anciennes versions **ignorent** `MissionTheme` / `MissionStage` et les colonnes nullable `Scenario`.
+5. Ne **pas** supprimer automatiquement thèmes, phases ou données de smoke ; archiver via l'admin si nécessaire.
+6. Conserver simulations, évaluations et historiques.
+7. Restauration PostgreSQL = **dernier recours** uniquement.
+8. Conserver l'horodatage de l'export et le point PITR.
+
+### N.G Points d'arrêt (STOP)
+
+STOP si : export absent/ancien ; PITR indisponible ; cible différente ; branche Render différente ; Auto-Deploy ON ; Pre-Deploy absent ; web et worker déployés simultanément ; migration non additive ; tests/build rouges ; flag ops actif ; worker non Live ; heartbeat absent ; web Pre-Deploy échoue ; web pas sur le même SHA ; health non OK ; fuite de données ; route admin accessible à MANAGER/TELEPRO.
+
+### N.H Décision du gate local (03/08/2026)
+
+| Critère | Résultat | Durée approx. |
+|---------|----------|---------------|
+| `npm test` | **OK — 482 tests / 28 fichiers** | ~22 s |
+| `npx tsc --noEmit` | OK (exit 0) | ~14 s |
+| `npm run lint --if-present` | OK — No ESLint warnings or errors | ~19 s |
+| `npx prisma validate` | OK — schéma valide | ~11 s |
+| `npm run build` | OK — **35/35** pages générées (routes N1–N3 présentes) | ~80 s |
+| `git diff --check` | OK | — |
+| Migration N1 | Additive, conforme schéma, **non exécutée** | — |
+| Secrets suivis | Aucun secret réel détecté | — |
+
+**GO local acquis.** **GO production conditionnel** aux vérifications manuelles Render (§N.A–N.B), à l'export frais et à l'ordre worker → web (§N.D).
+
+### N.I Matrice des variables (aucune valeur)
+
+Sources : `src/lib/env.ts`, scripts `prisma/*.ts`, `docs/environment-variables.md`, `.env.example`, `.env.production.example`.
+
+| Variable | Build / runtime / ops | Web / worker | Obligatoire ? | Action avant/après release |
+|----------|----------------------|--------------|---------------|----------------------------|
+| `DATABASE_URL` | runtime + ops migrate | web + worker | Oui | Inchangée ; vérifier présence |
+| `DIRECT_URL` | ops migrate (si pooler) | ops | Optionnelle | Aucun |
+| `SESSION_SECRET` | runtime | web | Oui (≥ 32) | Inchangée |
+| `NODE_ENV` | runtime | web + worker | Oui (`production`) | Inchangée |
+| `APP_URL` | runtime | web | Recommandée | Inchangée |
+| `AI_PROVIDER` | runtime | web + worker | Oui (défaut `demo`) | **Ne pas basculer** pendant la release |
+| `OPENAI_API_KEY` | runtime | web + worker | Si `openai` | Inchangée |
+| `OPENAI_REALTIME_MODEL` | runtime | web + worker | Optionnelle | Aucun |
+| `OPENAI_TRANSCRIPTION_MODEL` | runtime | worker | Imposée si `openai` | Aucun |
+| `OPENAI_EVALUATION_MODEL` | runtime | worker | Optionnelle | Aucun |
+| `OPENAI_ANALYSIS_MODEL` / `OPENAI_SCENARIO_MODEL` | runtime | worker | Optionnelles | Aucun |
+| `OPENAI_ANALYSIS_REASONING_EFFORT` | runtime | worker | Optionnelle | Aucun |
+| `OPENAI_REALTIME_VOICE` | runtime | web | Optionnelle | Aucun |
+| `OPENAI_TRANSCRIPTION_TIMEOUT_MS` | runtime | worker | Optionnelle | Aucun |
+| `TRANSCRIBE_RECORDING_MAX_ATTEMPTS` | runtime | worker | Optionnelle | Aucun |
+| `WORKER_HEARTBEAT_MS` / `WORKER_STALE_LOCK_MS` | runtime | worker | Optionnelles | Aucun |
+| `STORAGE_DRIVER` | runtime | web + worker | Oui (`s3` prod) | Aucun |
+| `S3_BUCKET` / `S3_REGION` / `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | runtime | web + worker | Si `s3` | Aucun |
+| `S3_ENDPOINT` / `S3_FORCE_PATH_STYLE` | runtime | web + worker | Optionnelles | Aucun |
+| `SIGNED_URL_TTL_SECONDS` | runtime | web | Optionnelle | Aucun |
+| `MAX_AUDIO_UPLOAD_MB` / `MAX_AUDIO_SIZE_MB` | runtime | web + worker | Optionnelles | Aucun |
+| `AUDIO_RETENTION_DAYS` / `RECORDING_RETENTION_DAYS` | runtime | web + worker | Optionnelles | Aucun |
+| `AUDIO_STORAGE_DIR` | runtime local | — | Optionnelle | Absente en prod |
+| `SPEAKER_ASSIGNMENT_CONFIDENCE_THRESHOLD` | runtime | worker | Optionnelle | Aucun |
+| `LOG_LEVEL` | runtime | web + worker | Optionnelle | Aucun |
+| `ALLOW_DEMO_SEED` | ops | — | Non | **Absent ou `false`** |
+| `ALLOW_EXERCISE_SEED` | ops (seed exercices) | — | Non | **Absent ou `false`** |
+| `SEED_ORG_SLUG` | ops | — | Non | Non pertinente |
+| `ALLOW_PROMPT_BUNDLE_BACKFILL` | ops | — | Non | **Absent ou `false`** |
+| `BACKFILL_ORG_SLUG` | ops | — | Non | Retirer si présente |
+| `ALLOW_PROMOTE_ADMIN` | ops | — | Non | **Absent ou `false`** |
+| `PROMOTE_ADMIN_EMAIL` | ops | — | Non | Non pertinente |
+
+**Cette release :** aucun nouveau flag ; aucun seed ; aucun backfill ; aucune promotion ; `package.json` / `package-lock.json` / `Dockerfile` / `next.config.ts` / `src/lib/env.ts` **inchangés** vs production historique.
+
+### N.J Audit Git (constat local)
+
+| Item | Valeur |
+|------|--------|
+| Branche | `release/minduel-missions-skills-v3` — **aucun upstream** |
+| HEAD | `69c4b5e0c832945292ae8eb90d358d9b37788619` = cible |
+| Remote | `minduel` → GitHub |
+| `minduel/main` | Même SHA (`0 0`) |
+| Fichiers suivis modifiés (working tree) | **Aucun** |
+| Fichiers non suivis | Docs d'audit locales, `*.patch`, `spec_body.md`, `write_audit_docs.py` — **non nécessaires au runtime** |
+| Patch/script dans le commit | **Aucun** |
+| Secrets suivis | Aucune clé OpenAI / credential S3 / token Render / token GitHub réelle |
+
+### N.K Audit migration N1 — `20260803112000_mission_catalog`
+
+**État :** non exécutée (ni `migrate dev`, ni `deploy`, ni `db push`).
+
+| Contrôle | Résultat |
+|----------|----------|
+| Concordance schéma | OK — `MissionTheme`, `MissionStage`, `Scenario.missionStageId?`, `Scenario.prospectAvatarKey?` |
+| Additive | Oui — `ALTER … ADD COLUMN` nullable + `CREATE TABLE` + index + FK |
+| Seed / INSERT | Aucun |
+| DROP / RENAME / UPDATE data | Aucun (DROP uniquement en commentaires de rollback) |
+| FK composites | Stage→Theme ; Scenario→Stage ; `ON DELETE RESTRICT` |
+| Index uniques ancres | `(id, organizationId)` sur Theme et Stage |
+| Ordre | Tables → index → contraintes |
+| Identifiants ≤ 63 | Max 48 octets |
+| Syntaxe `)REFERENCES` / `ON"` collé | Absente |
+| Rollback manuel | Documenté en en-tête |
+
+### N.L Compatibilité
+
+| Affirmation | Constat |
+|-------------|---------|
+| Ancien web ignore nouvelles tables/colonnes | Oui |
+| Migration avant nouveau web | Compatible (colonnes nullable, exercices `missionStageId = null`) |
+| Nouveau web exige migration pour `/admin/missions` et Missions catégorisées | Oui |
+| Worker démarre sans MissionTheme/MissionStage | Oui |
+| Runtime N2 expose non classés dans `Parcours existant` | Oui |
+| Backfill / seed | Non nécessaires |
+| Dix WebP dans dépôt + image Docker (`COPY public`) | Oui |
+| Clé avatar absente → fallback | Oui (`ProspectAvatar`) |
+| Nouvelle variable d'environnement | Aucune |
+
+### N.M Prochaines actions manuelles
+
+1. Confirmer dans Render le commit réellement déployé (ne pas se fier à la doc seule).
+2. Export PostgreSQL frais + PITR + Auto-Deploy OFF.
+3. Confirmer Pre-Deploy réel des deux services.
+4. Déployer worker seul → migration N1 → Live/heartbeat → web même SHA → health → smoke §N.E.
+5. Laisser Auto-Deploy OFF.
+
+---
+
+# Historique — Minduel MVP V2 (gate final / clôture)
+
+**État historique :** **GO production validé — Minduel MVP V2 déployé et smoke testé avec succès le 2 août 2026.**
 
 | Élément | Valeur |
 |---------|--------|
@@ -14,9 +283,8 @@
 | Décision préalable (gate) | GO local — GO production **conditionnel** (voir §G.2) |
 | Décision finale (après exécution) | **GO production validé** (voir §I) |
 
-> Procédure Render exécutable et réversible, **sans coût OpenAI**.
-> Les sections §A–§H conservent la trace du gate **avant** déploiement (préconditions, points d'arrêt, commandes marquées **« À NE PAS EXÉCUTER DANS CE LOT »**).
-> Le compte rendu d'exécution réelle est en **§I**. Cette mise à jour documentaire **ne déclenche aucun nouveau déploiement**.
+> Trace historique du gate V2. Les sections §A–§I ci-dessous conservent la procédure et le compte rendu V2.
+> Elles ne constituent **pas** la procédure active pour N1–N3 (voir section **LOT RELEASE N1–N3** en tête).
 
 ---
 
