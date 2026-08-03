@@ -1,12 +1,9 @@
 /**
- * Catalogue local d'avatars de prospect (lot N1), partagé client + serveur.
+ * Catalogue local d'avatars de prospect (lots N1/N2), partagé client + serveur.
  *
- * Contraintes volontaires : aucune URL distante, aucune image téléchargée,
- * aucun upload, aucun package. La prévisualisation est rendue en CSS à partir
- * d'initiales et d'une palette locale, donc aucun asset ne peut manquer.
- * Les portraits illustrés définitifs arriveront au lot N2 : les clés ci-dessous
- * sont stables et ne doivent pas être renommées (elles sont persistées dans
- * Scenario.prospectAvatarKey).
+ * Contraintes : aucune URL distante, aucun upload, aucun package, aucun base64.
+ * Les clés N1 restent stables (persistées dans Scenario.prospectAvatarKey).
+ * N2 associe chaque clé à un WebP local sous /avatars/prospects/.
  */
 
 export const PROSPECT_AVATAR_KEYS = [
@@ -25,9 +22,9 @@ export const PROSPECT_AVATAR_KEYS = [
 export type ProspectAvatarKey = (typeof PROSPECT_AVATAR_KEYS)[number];
 
 export type ProspectAvatarPalette = {
-  /** Couleur de départ du dégradé de fond. */
+  /** Couleur de départ du dégradé de fond (fallback). */
   from: string;
-  /** Couleur d'arrivée du dégradé de fond. */
+  /** Couleur d'arrivée du dégradé de fond (fallback). */
   to: string;
   /** Couleur du texte des initiales (contraste suffisant sur le dégradé). */
   fg: string;
@@ -39,19 +36,48 @@ export type ProspectAvatar = ProspectAvatarPalette & {
   label: string;
   /** Initiales rendues dans le cercle (1 à 2 caractères). */
   initials: string;
+  /** Chemin local public (jamais d'URL distante). */
+  src: string;
+  /** Ordre déterministe d'affichage (0..9). */
+  sortOrder: number;
+  /** Disponible dans le sélecteur admin. */
+  selectable: boolean;
 };
 
+function avatarEntry(
+  key: ProspectAvatarKey,
+  label: string,
+  initials: string,
+  index: number,
+  from: string,
+  to: string,
+  fg: string,
+): ProspectAvatar {
+  const n = String(index + 1).padStart(2, "0");
+  return {
+    key,
+    label,
+    initials,
+    src: `/avatars/prospects/prospect-${n}.webp`,
+    sortOrder: index,
+    selectable: true,
+    from,
+    to,
+    fg,
+  };
+}
+
 export const PROSPECT_AVATARS: readonly ProspectAvatar[] = [
-  { key: "alex", label: "Alex", initials: "AL", from: "#1e3a8a", to: "#2563eb", fg: "#eff6ff" },
-  { key: "sarah", label: "Sarah", initials: "SA", from: "#7c2d12", to: "#ea580c", fg: "#fff7ed" },
-  { key: "mathis", label: "Mathis", initials: "MA", from: "#134e4a", to: "#0d9488", fg: "#f0fdfa" },
-  { key: "lena", label: "Léna", initials: "LE", from: "#4c1d95", to: "#7c3aed", fg: "#f5f3ff" },
-  { key: "karim", label: "Karim", initials: "KA", from: "#164e63", to: "#0891b2", fg: "#ecfeff" },
-  { key: "chloe", label: "Chloé", initials: "CH", from: "#831843", to: "#db2777", fg: "#fdf2f8" },
-  { key: "thomas", label: "Thomas", initials: "TH", from: "#1f2937", to: "#4b5563", fg: "#f9fafb" },
-  { key: "nadia", label: "Nadia", initials: "NA", from: "#3f6212", to: "#65a30d", fg: "#f7fee7" },
-  { key: "julien", label: "Julien", initials: "JU", from: "#78350f", to: "#b45309", fg: "#fffbeb" },
-  { key: "ines", label: "Inès", initials: "IN", from: "#312e81", to: "#4f46e5", fg: "#eef2ff" },
+  avatarEntry("alex", "Alex", "AL", 0, "#1e3a8a", "#2563eb", "#eff6ff"),
+  avatarEntry("sarah", "Sarah", "SA", 1, "#7c2d12", "#ea580c", "#fff7ed"),
+  avatarEntry("mathis", "Mathis", "MA", 2, "#134e4a", "#0d9488", "#f0fdfa"),
+  avatarEntry("lena", "Léna", "LE", 3, "#4c1d95", "#7c3aed", "#f5f3ff"),
+  avatarEntry("karim", "Karim", "KA", 4, "#164e63", "#0891b2", "#ecfeff"),
+  avatarEntry("chloe", "Chloé", "CH", 5, "#831843", "#db2777", "#fdf2f8"),
+  avatarEntry("thomas", "Thomas", "TH", 6, "#1f2937", "#4b5563", "#f9fafb"),
+  avatarEntry("nadia", "Nadia", "NA", 7, "#3f6212", "#65a30d", "#f7fee7"),
+  avatarEntry("julien", "Julien", "JU", 8, "#78350f", "#b45309", "#fffbeb"),
+  avatarEntry("ines", "Inès", "IN", 9, "#312e81", "#4f46e5", "#eef2ff"),
 ];
 
 const AVATAR_BY_KEY = new Map<string, ProspectAvatar>(
@@ -69,6 +95,20 @@ export function getProspectAvatar(
 ): ProspectAvatar | null {
   if (!key) return null;
   return AVATAR_BY_KEY.get(key) ?? null;
+}
+
+/** Chemin local du portrait, ou null si clé absente/inconnue. */
+export function getProspectAvatarSrc(
+  key: string | null | undefined,
+): string | null {
+  return getProspectAvatar(key)?.src ?? null;
+}
+
+/** Avatars proposés dans le sélecteur admin (ordre déterministe). */
+export function listSelectableProspectAvatars(): readonly ProspectAvatar[] {
+  return PROSPECT_AVATARS.filter((a) => a.selectable).slice().sort(
+    (a, b) => a.sortOrder - b.sortOrder,
+  );
 }
 
 /** Libellé admin lisible, y compris pour l'absence d'avatar. */

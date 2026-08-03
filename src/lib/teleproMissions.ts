@@ -70,7 +70,50 @@ export type MissionExerciseInput = {
   targetDurationSec: number;
   status: string;
   organizationId: string;
+  /** Classement N1/N2 : null = exercice non classe. */
+  missionStageId?: string | null;
+  /** Cle catalogue local d'avatar (jamais d'URL). */
+  prospectAvatarKey?: string | null;
 };
+
+/** Theme Missions publie (projection sure). */
+export type MissionThemeInput = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  iconKey: string;
+  sortOrder: number;
+  status: string;
+};
+
+/** Phase/niveau Missions publie (projection sure). */
+export type MissionStageInput = {
+  id: string;
+  themeId: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  levelNumber: number;
+  sortOrder: number;
+  status: string;
+};
+
+/**
+ * Slug reserve du regroupement synthetique des exercices non classes.
+ * Impossible a confondre avec un slug administrable (prefixe __).
+ */
+export const LEGACY_THEME_SLUG = "__parcours-existant__";
+export const LEGACY_THEME_NAME = "Parcours existant";
+export const LEGACY_THEME_ID = "__legacy-theme__";
+export const LEGACY_STAGE_SLUG_PREFIX = "__niveau-";
+
+export type MissionStageState = "OPEN" | "COMPLETED" | "LOCKED";
+export type MissionThemeState =
+  | "EMPTY"
+  | "AVAILABLE"
+  | "IN_PROGRESS"
+  | "COMPLETED";
 
 export type MissionAttemptInput = {
   id: string;
@@ -121,6 +164,8 @@ export type MissionExerciseView = {
   ctaLabel: string | null;
   activeSimulationId: string | null;
   previousResult: PreviousResultView | null;
+  prospectAvatarKey: string | null;
+  recommended: boolean;
 };
 
 export type MissionLevelGroup = {
@@ -396,8 +441,17 @@ export function buildTeleproMissionsView(
       ctaLabel,
       activeSimulationId,
       previousResult: buildPreviousResult(finished),
+      prospectAvatarKey: exercise.prospectAvatarKey ?? null,
+      recommended: false,
     };
   });
+
+  const recommendedFlat = pickRecommendedExercise(views);
+  if (recommendedFlat) {
+    for (const view of views) {
+      view.recommended = view.id === recommendedFlat.id;
+    }
+  }
 
   const levelNumbers = [
     ...new Set(views.map((e) => e.missionLevel)),
@@ -425,4 +479,518 @@ export function buildTeleproMissionsView(
     allCompleted,
     empty,
   };
+}
+
+
+// ---------------------------------------------------------------------------
+// Catalogue Thème → Phase → Exercice (LOT N2)
+// ---------------------------------------------------------------------------
+
+export type TeleproMissionExerciseNode = {
+  id: string;
+  name: string;
+  difficulty: string;
+  difficultyLabel: string;
+  sortOrder: number;
+  missionLevel: number;
+  prospectAvatarKey: string | null;
+  status: ExerciseMissionStatus;
+  statusLabel: string;
+  ctaHref: string | null;
+  ctaLabel: string | null;
+  prepareHref: string | null;
+  debriefHref: string | null;
+  activeSimulationId: string | null;
+  previousResult: PreviousResultView | null;
+  recommended: boolean;
+};
+
+export type TeleproMissionStageView = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  levelNumber: number;
+  sortOrder: number;
+  exerciseCount: number;
+  completedCount: number;
+  progressPct: number;
+  state: MissionStageState;
+  exercises: TeleproMissionExerciseNode[];
+};
+
+export type TeleproMissionThemeView = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  iconKey: string;
+  sortOrder: number;
+  stageCount: number;
+  exerciseCount: number;
+  completedCount: number;
+  progressPct: number;
+  state: MissionThemeState;
+  recommended: TeleproMissionExerciseNode | null;
+  stages: TeleproMissionStageView[];
+  isLegacy: boolean;
+};
+
+export type TeleproMissionsCatalogView = {
+  themes: TeleproMissionThemeView[];
+  recommended: TeleproMissionExerciseNode | null;
+  completedCount: number;
+  totalCount: number;
+  allCompleted: boolean;
+  empty: boolean;
+};
+
+export function legacyStageSlug(levelNumber: number): string {
+  return LEGACY_STAGE_SLUG_PREFIX + String(levelNumber) + "__";
+}
+
+export function isLegacyThemeSlug(slug: string): boolean {
+  return slug === LEGACY_THEME_SLUG;
+}
+
+export function isPublishedMissionStatus(status: string): boolean {
+  return status === "PUBLISHED";
+}
+
+function progressPct(completed: number, total: number): number {
+  if (!Number.isFinite(total) || total <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
+}
+
+function compareStages(
+  a: Pick<MissionStageInput, "levelNumber" | "sortOrder" | "name" | "id">,
+  b: Pick<MissionStageInput, "levelNumber" | "sortOrder" | "name" | "id">,
+): number {
+  if (a.levelNumber !== b.levelNumber) return a.levelNumber - b.levelNumber;
+  if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+  const byName = a.name.localeCompare(b.name, "fr");
+  if (byName !== 0) return byName;
+  return a.id.localeCompare(b.id);
+}
+
+function compareThemes(
+  a: Pick<MissionThemeInput, "sortOrder" | "name" | "id">,
+  b: Pick<MissionThemeInput, "sortOrder" | "name" | "id">,
+): number {
+  if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+  const byName = a.name.localeCompare(b.name, "fr");
+  if (byName !== 0) return byName;
+  return a.id.localeCompare(b.id);
+}
+
+/**
+ * Déblocage des phases présentes d'un thème :
+ * 1) première phase ouverte ; 2) suivante si toutes les précédentes sont terminées ;
+ * 3) trous de numérotation non bloquants.
+ */
+export function resolveUnlockedStageIds(
+  stages: readonly Pick<
+    MissionStageInput,
+    "id" | "levelNumber" | "sortOrder" | "name"
+  >[],
+  stageExercises: ReadonlyMap<string, readonly { id: string }[]>,
+  completedIds: ReadonlySet<string>,
+): Set<string> {
+  const ordered = [...stages].sort(compareStages);
+  const unlocked = new Set<string>();
+  if (ordered.length === 0) return unlocked;
+
+  for (let i = 0; i < ordered.length; i++) {
+    const stage = ordered[i]!;
+    if (i === 0) {
+      unlocked.add(stage.id);
+      continue;
+    }
+    const previous = ordered.slice(0, i);
+    const allPreviousCompleted = previous.every((prev) => {
+      const exercises = stageExercises.get(prev.id) ?? [];
+      return (
+        exercises.length > 0 &&
+        exercises.every((ex) => completedIds.has(ex.id))
+      );
+    });
+    if (allPreviousCompleted) unlocked.add(stage.id);
+  }
+  return unlocked;
+}
+
+function toExerciseNode(
+  exercise: MissionExerciseInput,
+  status: ExerciseMissionStatus,
+  activeSimulationId: string | null,
+  previousResult: PreviousResultView | null,
+  recommended: boolean,
+): TeleproMissionExerciseNode {
+  const { ctaHref, ctaLabel } = resolveExerciseCta(
+    status,
+    exercise.id,
+    activeSimulationId,
+  );
+  const prepareHref =
+    status === ExerciseMissionStatus.LOCKED
+      ? null
+      : "/app/prepare/" + exercise.id;
+  const debriefHref = previousResult?.analysisHref ?? null;
+  return {
+    id: exercise.id,
+    name: exercise.name,
+    difficulty: exercise.level,
+    difficultyLabel: LEVEL_LABELS[exercise.level] ?? exercise.level,
+    sortOrder: exercise.sortOrder,
+    missionLevel: exercise.missionLevel,
+    prospectAvatarKey: exercise.prospectAvatarKey ?? null,
+    status,
+    statusLabel: EXERCISE_MISSION_STATUS_LABELS[status],
+    ctaHref,
+    ctaLabel,
+    prepareHref,
+    debriefHref,
+    activeSimulationId,
+    previousResult,
+    recommended,
+  };
+}
+
+function themeStateFromExercises(
+  nodes: readonly TeleproMissionExerciseNode[],
+): MissionThemeState {
+  if (nodes.length === 0) return "EMPTY";
+  const completed = nodes.filter(
+    (n) => n.status === ExerciseMissionStatus.COMPLETED,
+  ).length;
+  if (completed === nodes.length) return "COMPLETED";
+  if (
+    nodes.some(
+      (n) =>
+        n.status === ExerciseMissionStatus.IN_PROGRESS ||
+        n.status === ExerciseMissionStatus.COMPLETED,
+    )
+  ) {
+    return "IN_PROGRESS";
+  }
+  if (nodes.some((n) => n.status === ExerciseMissionStatus.AVAILABLE)) {
+    return "AVAILABLE";
+  }
+  return "AVAILABLE";
+}
+
+function buildStageView(args: {
+  stage: MissionStageInput;
+  exercises: MissionExerciseInput[];
+  unlocked: boolean;
+  completedIds: ReadonlySet<string>;
+  activeByScenario: ReadonlyMap<string, MissionAttemptInput | null>;
+  finishedByScenario: ReadonlyMap<string, MissionAttemptInput | null>;
+}): TeleproMissionStageView {
+  const ordered = sortMissionExercises(args.exercises);
+  const nodes: TeleproMissionExerciseNode[] = ordered.map((exercise) => {
+    const active = args.activeByScenario.get(exercise.id) ?? null;
+    const finished = args.finishedByScenario.get(exercise.id) ?? null;
+    const status = resolveExerciseMissionStatus({
+      hasFinishedAttempt: Boolean(finished),
+      hasActiveAttempt: Boolean(active),
+      levelUnlocked: args.unlocked,
+    });
+    return toExerciseNode(
+      exercise,
+      status,
+      active?.id ?? null,
+      buildPreviousResult(finished),
+      false,
+    );
+  });
+
+  const completedCount = nodes.filter(
+    (n) => n.status === ExerciseMissionStatus.COMPLETED,
+  ).length;
+  const exerciseCount = nodes.length;
+  let state: MissionStageState = "LOCKED";
+  if (args.unlocked) {
+    state =
+      exerciseCount > 0 && completedCount === exerciseCount
+        ? "COMPLETED"
+        : "OPEN";
+  } else if (
+    nodes.some(
+      (n) =>
+        n.status === ExerciseMissionStatus.COMPLETED ||
+        n.status === ExerciseMissionStatus.IN_PROGRESS,
+    )
+  ) {
+    // Priorité COMPLETED / IN_PROGRESS : la phase reste consultable.
+    state =
+      completedCount === exerciseCount && exerciseCount > 0
+        ? "COMPLETED"
+        : "OPEN";
+  }
+
+  return {
+    id: args.stage.id,
+    slug: args.stage.slug,
+    name: args.stage.name,
+    description: args.stage.description,
+    levelNumber: args.stage.levelNumber,
+    sortOrder: args.stage.sortOrder,
+    exerciseCount,
+    completedCount,
+    progressPct: progressPct(completedCount, exerciseCount),
+    state,
+    exercises: nodes,
+  };
+}
+
+function markRecommended(
+  themes: TeleproMissionThemeView[],
+): TeleproMissionExerciseNode | null {
+  const flat: TeleproMissionExerciseNode[] = [];
+  for (const theme of themes) {
+    for (const stage of theme.stages) {
+      for (const ex of stage.exercises) flat.push(ex);
+    }
+  }
+  const recommended = pickRecommendedExercise(
+    flat.map((ex) => ({
+      ...ex,
+      objective: null,
+      prospectProfile: null,
+      personality: null,
+      successConditions: null,
+      targetDurationSec: 0,
+    })),
+  );
+  if (!recommended) {
+    for (const theme of themes) theme.recommended = null;
+    return null;
+  }
+  for (const theme of themes) {
+    let themeRec: TeleproMissionExerciseNode | null = null;
+    for (const stage of theme.stages) {
+      for (const ex of stage.exercises) {
+        ex.recommended = ex.id === recommended.id;
+        if (ex.recommended) themeRec = ex;
+      }
+    }
+    theme.recommended = themeRec;
+  }
+  for (const theme of themes) {
+    if (theme.recommended) return theme.recommended;
+  }
+  return null;
+}
+
+/**
+ * Construit le catalogue télépro Thème → Phase → Exercice.
+ * Les thèmes/phases non PUBLISHED sont exclus.
+ * Les exercices non classés forment un thème synthétique « Parcours existant ».
+ */
+export function buildTeleproMissionsCatalogView(
+  exercisesInput: readonly MissionExerciseInput[],
+  attemptsInput: readonly MissionAttemptInput[],
+  themesInput: readonly MissionThemeInput[],
+  stagesInput: readonly MissionStageInput[],
+): TeleproMissionsCatalogView {
+  const publishedThemes = themesInput
+    .filter((t) => isPublishedMissionStatus(t.status))
+    .slice()
+    .sort(compareThemes);
+  const publishedStages = stagesInput
+    .filter((s) => isPublishedMissionStatus(s.status))
+    .slice()
+    .sort(compareStages);
+  const publishedStageIds = new Set(publishedStages.map((s) => s.id));
+  const publishedThemeIds = new Set(publishedThemes.map((t) => t.id));
+
+  const exercises = sortMissionExercises(exercisesInput);
+  const attemptsByScenario = new Map<string, MissionAttemptInput[]>();
+  for (const attempt of attemptsInput) {
+    const list = attemptsByScenario.get(attempt.scenarioId) ?? [];
+    list.push(attempt);
+    attemptsByScenario.set(attempt.scenarioId, list);
+  }
+
+  const completedIds = new Set<string>();
+  const activeByScenario = new Map<string, MissionAttemptInput | null>();
+  const finishedByScenario = new Map<string, MissionAttemptInput | null>();
+  for (const exercise of exercises) {
+    const attempts = attemptsByScenario.get(exercise.id) ?? [];
+    const active = pickActiveAttempt(attempts);
+    const finished = pickLatestFinishedAttempt(attempts);
+    activeByScenario.set(exercise.id, active);
+    finishedByScenario.set(exercise.id, finished);
+    if (finished) completedIds.add(exercise.id);
+  }
+
+  const classified: MissionExerciseInput[] = [];
+  const unclassified: MissionExerciseInput[] = [];
+  for (const exercise of exercises) {
+    const stageId = exercise.missionStageId ?? null;
+    if (!stageId) {
+      unclassified.push(exercise);
+      continue;
+    }
+    if (!publishedStageIds.has(stageId)) continue;
+    const stage = publishedStages.find((s) => s.id === stageId);
+    if (!stage || !publishedThemeIds.has(stage.themeId)) continue;
+    classified.push(exercise);
+  }
+
+  const themes: TeleproMissionThemeView[] = [];
+
+  for (const theme of publishedThemes) {
+    const themeStages = publishedStages.filter((s) => s.themeId === theme.id);
+    const stageExercises = new Map<string, MissionExerciseInput[]>();
+    for (const stage of themeStages) {
+      stageExercises.set(
+        stage.id,
+        classified.filter((e) => e.missionStageId === stage.id),
+      );
+    }
+    // Ne garder que les phases qui ont au moins un exercice assigné visible.
+    const presentStages = themeStages.filter(
+      (s) => (stageExercises.get(s.id) ?? []).length > 0,
+    );
+    if (presentStages.length === 0) continue;
+
+    const unlocked = resolveUnlockedStageIds(
+      presentStages,
+      stageExercises,
+      completedIds,
+    );
+    const stages = presentStages.map((stage) =>
+      buildStageView({
+        stage,
+        exercises: stageExercises.get(stage.id) ?? [],
+        unlocked: unlocked.has(stage.id),
+        completedIds,
+        activeByScenario,
+        finishedByScenario,
+      }),
+    );
+    const allNodes = stages.flatMap((st) => st.exercises);
+    const completedCount = allNodes.filter(
+      (n) => n.status === ExerciseMissionStatus.COMPLETED,
+    ).length;
+    themes.push({
+      id: theme.id,
+      slug: theme.slug,
+      name: theme.name,
+      description: theme.description,
+      iconKey: theme.iconKey,
+      sortOrder: theme.sortOrder,
+      stageCount: stages.length,
+      exerciseCount: allNodes.length,
+      completedCount,
+      progressPct: progressPct(completedCount, allNodes.length),
+      state: themeStateFromExercises(allNodes),
+      recommended: null,
+      stages,
+      isLegacy: false,
+    });
+  }
+
+  if (unclassified.length > 0) {
+    const levels = [
+      ...new Set(unclassified.map((e) => e.missionLevel)),
+    ].sort((a, b) => a - b);
+    const syntheticStages: MissionStageInput[] = levels.map((levelNumber) => ({
+      id: LEGACY_THEME_ID + "-stage-" + String(levelNumber),
+      themeId: LEGACY_THEME_ID,
+      slug: legacyStageSlug(levelNumber),
+      name: "Niveau " + String(levelNumber),
+      description: null,
+      levelNumber,
+      sortOrder: levelNumber,
+      status: "PUBLISHED",
+    }));
+    const stageExercises = new Map<string, MissionExerciseInput[]>();
+    for (const stage of syntheticStages) {
+      stageExercises.set(
+        stage.id,
+        unclassified.filter((e) => e.missionLevel === stage.levelNumber),
+      );
+    }
+    const unlocked = resolveUnlockedStageIds(
+      syntheticStages,
+      stageExercises,
+      completedIds,
+    );
+    const stages = syntheticStages.map((stage) =>
+      buildStageView({
+        stage,
+        exercises: stageExercises.get(stage.id) ?? [],
+        unlocked: unlocked.has(stage.id),
+        completedIds,
+        activeByScenario,
+        finishedByScenario,
+      }),
+    );
+    const allNodes = stages.flatMap((st) => st.exercises);
+    const completedCount = allNodes.filter(
+      (n) => n.status === ExerciseMissionStatus.COMPLETED,
+    ).length;
+    themes.push({
+      id: LEGACY_THEME_ID,
+      slug: LEGACY_THEME_SLUG,
+      name: LEGACY_THEME_NAME,
+      description:
+        "Exercices assignés non classés dans le catalogue Missions.",
+      iconKey: "flag",
+      sortOrder: Number.MAX_SAFE_INTEGER,
+      stageCount: stages.length,
+      exerciseCount: allNodes.length,
+      completedCount,
+      progressPct: progressPct(completedCount, allNodes.length),
+      state: themeStateFromExercises(allNodes),
+      recommended: null,
+      stages,
+      isLegacy: true,
+    });
+  }
+
+  themes.sort((a, b) => {
+    if (a.isLegacy !== b.isLegacy) return a.isLegacy ? 1 : -1;
+    if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+    return a.name.localeCompare(b.name, "fr");
+  });
+
+  const recommended = markRecommended(themes);
+  const allNodes = themes.flatMap((t) => t.stages.flatMap((st) => st.exercises));
+  const completedCount = allNodes.filter(
+    (n) => n.status === ExerciseMissionStatus.COMPLETED,
+  ).length;
+  const totalCount = allNodes.length;
+  const empty = totalCount === 0;
+
+  return {
+    themes,
+    recommended,
+    completedCount,
+    totalCount,
+    allCompleted: !empty && completedCount === totalCount,
+    empty,
+  };
+}
+
+export function findThemeInCatalog(
+  catalog: TeleproMissionsCatalogView,
+  themeSlug: string,
+): TeleproMissionThemeView | null {
+  return catalog.themes.find((t) => t.slug === themeSlug) ?? null;
+}
+
+export function findStageInCatalog(
+  catalog: TeleproMissionsCatalogView,
+  themeSlug: string,
+  stageSlug: string,
+): { theme: TeleproMissionThemeView; stage: TeleproMissionStageView } | null {
+  const theme = findThemeInCatalog(catalog, themeSlug);
+  if (!theme) return null;
+  const stage = theme.stages.find((s) => s.slug === stageSlug) ?? null;
+  if (!stage) return null;
+  return { theme, stage };
 }

@@ -3,9 +3,17 @@ import "server-only";
 import { prisma } from "@/lib/db";
 import { ScenarioStatus } from "@/lib/enums";
 import {
+  buildTeleproMissionsCatalogView,
   buildTeleproMissionsView,
+  findStageInCatalog,
+  findThemeInCatalog,
   type MissionAttemptInput,
   type MissionExerciseInput,
+  type MissionStageInput,
+  type MissionThemeInput,
+  type TeleproMissionStageView,
+  type TeleproMissionThemeView,
+  type TeleproMissionsCatalogView,
   type TeleproMissionsView,
 } from "@/lib/teleproMissions";
 
@@ -23,17 +31,38 @@ const SCENARIO_SAFE_SELECT = {
   targetDurationSec: true,
   status: true,
   organizationId: true,
+  missionStageId: true,
+  prospectAvatarKey: true,
 } as const;
 
-/**
- * Charge le modèle de vue missions pour un téléprospecteur.
- * Filtre : organizationId + teleproId + Scenario.status PUBLISHED.
- * Deux requêtes (assignations, tentatives) — pas de N+1.
- */
-export async function loadTeleproMissionsView(
+const THEME_SAFE_SELECT = {
+  id: true,
+  slug: true,
+  name: true,
+  description: true,
+  iconKey: true,
+  sortOrder: true,
+  status: true,
+} as const;
+
+const STAGE_SAFE_SELECT = {
+  id: true,
+  themeId: true,
+  slug: true,
+  name: true,
+  description: true,
+  levelNumber: true,
+  sortOrder: true,
+  status: true,
+} as const;
+
+async function loadAssignedExercisesAndAttempts(
   teleproId: string,
   organizationId: string,
-): Promise<TeleproMissionsView> {
+): Promise<{
+  exercises: MissionExerciseInput[];
+  attempts: MissionAttemptInput[];
+}> {
   const assignments = await prisma.scenarioAssignment.findMany({
     where: {
       teleproId,
@@ -77,5 +106,96 @@ export async function loadTeleproMissionsView(
     });
   }
 
+  return { exercises, attempts };
+}
+
+async function loadPublishedCatalogMeta(
+  organizationId: string,
+): Promise<{ themes: MissionThemeInput[]; stages: MissionStageInput[] }> {
+  const themes = await prisma.missionTheme.findMany({
+    where: { organizationId, status: "PUBLISHED" },
+    select: THEME_SAFE_SELECT,
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+  });
+
+  const themeIds = themes.map((t) => t.id);
+  const stages =
+    themeIds.length === 0
+      ? []
+      : await prisma.missionStage.findMany({
+          where: {
+            organizationId,
+            status: "PUBLISHED",
+            themeId: { in: themeIds },
+          },
+          select: STAGE_SAFE_SELECT,
+          orderBy: [{ levelNumber: "asc" }, { sortOrder: "asc" }],
+        });
+
+  return { themes, stages };
+}
+
+/**
+ * Charge le modèle de vue missions plat (compat lot I).
+ * Filtre : organizationId + teleproId + Scenario.status PUBLISHED.
+ */
+export async function loadTeleproMissionsView(
+  teleproId: string,
+  organizationId: string,
+): Promise<TeleproMissionsView> {
+  const { exercises, attempts } = await loadAssignedExercisesAndAttempts(
+    teleproId,
+    organizationId,
+  );
   return buildTeleproMissionsView(exercises, attempts);
+}
+
+/**
+ * Catalogue Thème → Phase → Exercice pour le téléprospecteur.
+ * Isolation stricte org + télépro + PUBLISHED ; thèmes/phases DRAFT/ARCHIVED exclus.
+ */
+export async function loadTeleproMissionsCatalogView(
+  teleproId: string,
+  organizationId: string,
+): Promise<TeleproMissionsCatalogView> {
+  const [{ exercises, attempts }, { themes, stages }] = await Promise.all([
+    loadAssignedExercisesAndAttempts(teleproId, organizationId),
+    loadPublishedCatalogMeta(organizationId),
+  ]);
+  return buildTeleproMissionsCatalogView(
+    exercises,
+    attempts,
+    themes,
+    stages,
+  );
+}
+
+/** Thème visible pour le télépro, ou null → 404. */
+export async function loadTeleproMissionThemeView(
+  teleproId: string,
+  organizationId: string,
+  themeSlug: string,
+): Promise<TeleproMissionThemeView | null> {
+  const catalog = await loadTeleproMissionsCatalogView(
+    teleproId,
+    organizationId,
+  );
+  return findThemeInCatalog(catalog, themeSlug);
+}
+
+/** Phase visible pour le télépro, ou null → 404. */
+export async function loadTeleproMissionStageView(
+  teleproId: string,
+  organizationId: string,
+  themeSlug: string,
+  stageSlug: string,
+): Promise<{
+  theme: TeleproMissionThemeView;
+  stage: TeleproMissionStageView;
+} | null> {
+  const catalog = await loadTeleproMissionsCatalogView(
+    teleproId,
+    organizationId,
+  );
+  return findStageInCatalog(catalog, themeSlug, stageSlug);
 }

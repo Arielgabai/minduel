@@ -23,7 +23,8 @@ export function TeleproNav() {
 
   return (
     <nav
-      className="sticky bottom-0 z-40 border-t border-white/10 bg-ink-900/95 backdrop-blur"
+      className="z-40 flex-shrink-0 border-t border-white/10 bg-ink-900/95 backdrop-blur"
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       aria-label="Navigation principale"
     >
       <ul className="flex items-stretch justify-around gap-0.5 px-1 py-1 sm:px-2">

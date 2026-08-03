@@ -3,6 +3,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { requireTelepro } from "@/lib/auth";
 import { Card, Badge, SectionTitle } from "@/components/ui";
+import { ProspectAvatar } from "@/components/ProspectAvatar";
 import { LEVEL_LABELS, CALL_TYPE_LABELS } from "@/lib/enums";
 import { formatDuration } from "@/lib/utils";
 import { PrepareClient } from "./PrepareClient";
@@ -44,12 +45,20 @@ export default async function PreparePage({
       </div>
 
       <Card>
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-lg font-semibold">{scenario.name}</p>
-            <p className="text-sm text-white/50">
-              {CALL_TYPE_LABELS[scenario.callType] ?? scenario.callType}
-            </p>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3">
+            <ProspectAvatar
+              avatarKey={scenario.prospectAvatarKey}
+              fallbackText={scenario.name}
+              size={56}
+              decorative={false}
+            />
+            <div className="min-w-0">
+              <p className="text-lg font-semibold">{scenario.name}</p>
+              <p className="text-sm text-white/50">
+                {CALL_TYPE_LABELS[scenario.callType] ?? scenario.callType}
+              </p>
+            </div>
           </div>
           <Badge tone={scenario.level === "DIFFICILE" ? "flame" : scenario.level === "FACILE" ? "mint" : "violet"}>
             {LEVEL_LABELS[scenario.level]}

@@ -164,10 +164,18 @@ describe("Telepro shell ? liens pr?paration / d?brief pr?serv?s", () => {
     expect(missionsEngine).toContain("`/app/prepare/${exerciseId}`");
     expect(missionsEngine).toContain("`/app/call/${activeSimulationId}`");
     expect(missionsEngine).toContain("`/app/analysis/${attempt.id}`");
-    expect(read("src/app/app/missions/page.tsx")).toContain("loadTeleproMissionsView");
+    expect(read("src/app/app/missions/page.tsx")).toContain(
+      "loadTeleproMissionsCatalogView",
+    );
+    expect(read("src/app/app/missions/page.tsx")).toContain(
+      "loadTeleproMissionsView",
+    );
     expect(read("src/app/app/progression/page.tsx")).toContain("loadProgressionForTelepro");
     expect(read("src/app/app/progression/ProgressionTabs.tsx")).toContain("analysisHref");
     expect(read("src/lib/progressionView.ts")).toContain("/app/analysis/");
+    expect(read("src/app/app/page.tsx")).toContain(
+      "loadTeleproMissionsCatalogView",
+    );
     expect(read("src/app/app/page.tsx")).toContain("loadTeleproMissionsView");
   });
 
@@ -181,17 +189,23 @@ describe("Telepro shell ? liens pr?paration / d?brief pr?serv?s", () => {
 });
 
 describe("Telepro shell ? responsive statique", () => {
-  it("cadre 480px et tab-bar sticky dans le shell", () => {
+  it("cadre 480px et nav hors zone scrollable", () => {
     const shell = read("src/components/TeleproShell.tsx");
     expect(shell).toContain("max-w-[480px]");
     expect(shell).toContain("md:rounded-[28px]");
-    expect(shell).toContain("overflow-x-hidden");
+    expect(shell).toContain("h-[100dvh]");
+    expect(shell).toContain("overflow-hidden");
+    expect(shell).toContain("overflow-y-auto");
+    expect(shell).toContain("min-h-0");
+    expect(shell).toContain("flex-1");
     expect(shell).toContain("shouldShowTeleproNav");
     expect(shell).toContain("<main");
 
     const nav = read("src/components/TeleproNav.tsx");
-    expect(nav).toContain("sticky bottom-0");
+    expect(nav).toContain("flex-shrink-0");
+    expect(nav).toContain("safe-area-inset-bottom");
     expect(nav).toContain("min-h-11");
+    expect(nav).not.toContain("sticky bottom-0");
     expect(nav).not.toContain("fixed inset-x-0");
   });
 });

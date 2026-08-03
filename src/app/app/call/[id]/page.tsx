@@ -28,6 +28,7 @@ export default async function CallPage({
     <CallClient
       simulationId={sim.id}
       prospectName={sim.prospectName ?? "Prospect"}
+      prospectAvatarKey={sim.scenario.prospectAvatarKey ?? null}
       scenarioName={sim.scenario.name}
       level={sim.scenario.level}
       demo={sim.mode === "DEMO"}

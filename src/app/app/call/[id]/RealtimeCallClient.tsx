@@ -5,14 +5,18 @@ import { useRouter } from "next/navigation";
 import { Waveform } from "@/components/Waveform";
 import { LEVEL_LABELS } from "@/lib/enums";
 import { cx, formatDuration } from "@/lib/utils";
+import { ProspectAvatar } from "@/components/ProspectAvatar";
 import { generateInitials } from "@/lib/callUi";
 import { useRealtimeSession, type RealtimePhase } from "./useRealtimeSession";
+
+void generateInitials;
 
 type Turn = { role: string; content: string };
 
 interface Props {
   simulationId: string;
   prospectName: string;
+  prospectAvatarKey?: string | null;
   scenarioName: string;
   level: string;
   demo: boolean;
@@ -161,19 +165,21 @@ export function RealtimeCallClient(props: Props) {
       {/* Prospect */}
       <div className="mt-6 flex flex-col items-center px-5">
         <div
-          aria-hidden="true"
           className={cx(
-            "flex h-24 w-24 items-center justify-center rounded-full border-2 text-2xl font-bold tracking-wide text-white transition",
-            phase === "speaking"
-              ? "border-flame-500/60 glow-flame animate-pulse-ring"
-              : "border-violet-500/40",
+            "rounded-full transition",
+            phase === "speaking" ? "glow-flame animate-pulse-ring" : "",
           )}
-          style={{
-            background:
-              "radial-gradient(circle at 50% 30%, rgba(124,58,237,0.35), rgba(10,11,26,0.6))",
-          }}
         >
-          {generateInitials(props.prospectName)}
+          <ProspectAvatar
+            avatarKey={props.prospectAvatarKey}
+            fallbackText={props.prospectName}
+            size={96}
+            decorative={false}
+            ring={phase === "speaking" ? "recommended" : "none"}
+            className={
+              phase === "speaking" ? "border-flame-500/60" : "border-violet-500/40"
+            }
+          />
         </div>
         <p className="mt-3 text-lg font-bold">{props.prospectName}</p>
         <p className="text-xs text-white/45">
