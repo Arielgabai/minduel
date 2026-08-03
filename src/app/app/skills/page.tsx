@@ -16,8 +16,8 @@ export default async function SkillsPage() {
   );
 
   return (
-    <div className="animate-fade-up">
-      <h1 className="mb-1 text-2xl font-bold">Skills</h1>
+    <div className="animate-fade-up pb-24">
+      <h1 className="mb-1 text-2xl font-bold tracking-tight">Skills</h1>
       <p className="mb-6 text-sm text-white/50">
         Ta bibliothèque pédagogique pour progresser entre deux appels.
       </p>

@@ -25,19 +25,33 @@ export default async function SkillsArticlePage({
   if (!article) notFound();
 
   return (
-    <div className="animate-fade-up">
-      <Link
-        href={`/app/skills/${article.categorySlug}`}
-        className="mb-4 inline-flex min-h-11 items-center gap-2 rounded-xl px-2 py-2 text-sm text-white/60 transition hover:text-white focus-visible:ring-2 focus-visible:ring-electric-500/50"
+    <div className="animate-fade-up mx-auto max-w-xl pb-28">
+      <nav
+        aria-label="Fil d'Ariane"
+        className="mb-4 flex flex-wrap items-center gap-1 text-sm text-white/50"
       >
-        <span aria-hidden>‹</span> {article.categoryName}
-      </Link>
+        <Link
+          href="/app/skills"
+          className="inline-flex min-h-11 items-center rounded-xl px-2 py-2 transition hover:text-white focus-visible:ring-2 focus-visible:ring-electric-500/50"
+        >
+          Skills
+        </Link>
+        <span aria-hidden className="text-white/30">
+          /
+        </span>
+        <Link
+          href={`/app/skills/${article.categorySlug}`}
+          className="inline-flex min-h-11 items-center rounded-xl px-2 py-2 transition hover:text-white focus-visible:ring-2 focus-visible:ring-electric-500/50"
+        >
+          {article.categoryName}
+        </Link>
+      </nav>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <span className="inline-flex items-center rounded-full border border-electric-500/30 bg-electric-500/15 px-2.5 py-0.5 text-xs font-medium text-electric-400">
           {article.sectionName}
         </span>
-        <span className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-xs text-white/60">
+        <span className="inline-flex items-center rounded-full border border-flame-500/30 bg-flame-500/10 px-2.5 py-0.5 text-xs text-flame-300">
           {article.readingMinutes} min
         </span>
         {article.tags.map((tag) => (
@@ -50,19 +64,21 @@ export default async function SkillsArticlePage({
         ))}
       </div>
 
-      <h1 className="mb-2 text-2xl font-bold leading-tight">
+      <h1 className="mb-2 text-2xl font-bold leading-tight tracking-tight">
         {article.title}
       </h1>
       {article.summary && (
-        <p className="mb-6 text-sm text-white/55">{article.summary}</p>
+        <p className="mb-6 text-sm leading-relaxed text-white/55">
+          {article.summary}
+        </p>
       )}
 
       <SkillBlocks blocks={article.blocks} />
 
-      <div className="mt-8">
+      <div className="mt-10">
         <Link
           href={`/app/skills/${article.categorySlug}`}
-          className="btn-gradient inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold text-white focus-visible:ring-2 focus-visible:ring-electric-500/50"
+          className="btn-gradient inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold text-white focus-visible:ring-2 focus-visible:ring-electric-500/50 sm:w-auto"
         >
           Retour à {article.categoryName}
         </Link>
