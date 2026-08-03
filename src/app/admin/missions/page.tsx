@@ -1,12 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Badge, Button, Card } from "@/components/ui";
+import type { AdminExerciseListItem } from "@/lib/adminExercisesUi";
 import {
   MISSION_ICON_KEYS,
   MISSION_STATUS_LABELS,
   isMissionArchivedReadOnly,
   missionStatusTone,
+  type MissionLevelReadiness,
+  type MissionStageExerciseSummary,
   type MissionThemeNode,
 } from "@/lib/missionCatalog";
 
@@ -48,6 +52,15 @@ async function readError(res: Response): Promise<string> {
   );
 }
 
+function exerciseStatusTone(
+  status: string,
+): "gray" | "mint" | "red" | "flame" {
+  if (status === "PUBLISHED") return "mint";
+  if (status === "ARCHIVED") return "red";
+  if (status === "REVIEW_REQUIRED") return "flame";
+  return "gray";
+}
+
 export default function AdminMissionsPage() {
   const [themes, setThemes] = useState<MissionThemeNode[]>([]);
   const [treeLoading, setTreeLoading] = useState(true);
@@ -65,6 +78,15 @@ export default function AdminMissionsPage() {
 
   const [themeForm, setThemeForm] = useState<ThemeFormState | null>(null);
   const [stageForm, setStageForm] = useState<StageFormState | null>(null);
+  const [stageExercise, setStageExercise] =
+    useState<MissionStageExerciseSummary | null>(null);
+  const [stageReadiness, setStageReadiness] =
+    useState<MissionLevelReadiness | null>(null);
+  const [exerciseOptions, setExerciseOptions] = useState<
+    AdminExerciseListItem[]
+  >([]);
+  const [assignExerciseId, setAssignExerciseId] = useState("");
+  const [exercisesLoading, setExercisesLoading] = useState(false);
 
   const [createKind, setCreateKind] = useState<CreateKind>(null);
   const [createName, setCreateName] = useState("");
@@ -96,11 +118,32 @@ export default function AdminMissionsPage() {
     void loadTree();
   }, [loadTree]);
 
+  const loadExerciseOptions = useCallback(async () => {
+    setExercisesLoading(true);
+    try {
+      const res = await fetch("/api/admin/exercises", { method: "GET" });
+      if (!res.ok) {
+        setExerciseOptions([]);
+        return;
+      }
+      const json = await res.json().catch(() => null);
+      const list = (json?.data?.items ?? []) as AdminExerciseListItem[];
+      setExerciseOptions(Array.isArray(list) ? list : []);
+    } catch {
+      setExerciseOptions([]);
+    } finally {
+      setExercisesLoading(false);
+    }
+  }, []);
+
   const loadDetail = useCallback(async (sel: NonNullable<Selection>) => {
     setDetailLoading(true);
     setEditorError(null);
     setEditorNotice(null);
     setConfirming(null);
+    setStageExercise(null);
+    setStageReadiness(null);
+    setAssignExerciseId("");
     try {
       const res = await fetch(
         `/api/admin/mission-catalog/${sel.id}?type=${sel.kind}`,
@@ -133,6 +176,13 @@ export default function AdminMissionsPage() {
           levelNumber: data.levelNumber,
           sortOrder: data.sortOrder,
         });
+        const exercise = (data.exercise ??
+          null) as MissionStageExerciseSummary | null;
+        setStageExercise(exercise);
+        setStageReadiness(
+          (data.readiness ?? null) as MissionLevelReadiness | null,
+        );
+        setAssignExerciseId(exercise?.id ?? "");
       }
     } catch {
       setEditorError("Chargement impossible.");
@@ -145,7 +195,11 @@ export default function AdminMissionsPage() {
     setSelection(sel);
     setThemeForm(null);
     setStageForm(null);
+    setStageExercise(null);
+    setStageReadiness(null);
+    setAssignExerciseId("");
     void loadDetail(sel);
+    if (sel.kind === "stage") void loadExerciseOptions();
   }
 
   async function createEntity() {
@@ -248,6 +302,7 @@ export default function AdminMissionsPage() {
         body: JSON.stringify({ entity: selection.kind, action }),
       });
       if (!res.ok) {
+        // 409 readiness (et autres erreurs) : message API affiché tel quel.
         setEditorError(await readError(res));
         return;
       }
@@ -265,6 +320,71 @@ export default function AdminMissionsPage() {
     } finally {
       setBusy(false);
       setConfirming(null);
+    }
+  }
+
+  async function assignExercise() {
+    if (!selection || selection.kind !== "stage" || busy) return;
+    if (!assignExerciseId) {
+      setEditorError("Choisis un exercice à associer.");
+      return;
+    }
+    setBusy(true);
+    setEditorError(null);
+    setEditorNotice(null);
+    try {
+      const res = await fetch(`/api/admin/mission-catalog/${selection.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          entity: "stage",
+          action: "assignExercise",
+          exerciseId: assignExerciseId,
+        }),
+      });
+      if (!res.ok) {
+        setEditorError(await readError(res));
+        return;
+      }
+      setEditorNotice("Exercice associé au niveau.");
+      await loadTree();
+      await loadDetail(selection);
+      await loadExerciseOptions();
+    } catch {
+      setEditorError("Association impossible.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unassignExercise() {
+    if (!selection || selection.kind !== "stage" || busy) return;
+    if (detailStatus !== "DRAFT") return;
+    setBusy(true);
+    setEditorError(null);
+    setEditorNotice(null);
+    try {
+      const res = await fetch(`/api/admin/mission-catalog/${selection.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          entity: "stage",
+          action: "unassignExercise",
+        }),
+      });
+      if (!res.ok) {
+        setEditorError(await readError(res));
+        return;
+      }
+      setEditorNotice("Exercice retiré du niveau.");
+      setAssignExerciseId("");
+      await loadTree();
+      await loadDetail(selection);
+      await loadExerciseOptions();
+    } catch {
+      setEditorError("Dissociation impossible.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -288,6 +408,8 @@ export default function AdminMissionsPage() {
       setSelection(null);
       setThemeForm(null);
       setStageForm(null);
+      setStageExercise(null);
+      setStageReadiness(null);
       await loadTree();
     } catch {
       setEditorError("Suppression impossible.");
@@ -300,13 +422,26 @@ export default function AdminMissionsPage() {
   const readOnly = isMissionArchivedReadOnly(detailStatus);
   const editable = detailStatus === "DRAFT";
 
+  const sortedExerciseOptions = useMemo(() => {
+    if (!selection || selection.kind !== "stage") return exerciseOptions;
+    const stageId = selection.id;
+    return [...exerciseOptions].sort((a, b) => {
+      const rank = (ex: AdminExerciseListItem) => {
+        if (!ex.missionStageId) return 0;
+        if (ex.missionStageId === stageId) return 1;
+        return 2;
+      };
+      return rank(a) - rank(b) || a.name.localeCompare(b.name, "fr");
+    });
+  }, [exerciseOptions, selection]);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">Parcours</h1>
           <p className="mt-1 text-sm text-[#9AA1B2]">
-            Catalogue des missions : thèmes, phases et ordre pédagogique.
+            Thèmes et niveaux entièrement configurables (pas de plafond).
           </p>
         </div>
         <Button
@@ -358,7 +493,7 @@ export default function AdminMissionsPage() {
                   <ul className="mt-1 space-y-1 border-l border-[#1e222c] pl-3">
                     {theme.stages.map((stage) => (
                       <li key={stage.id}>
-                        <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-start justify-between gap-2">
                           <button
                             type="button"
                             onClick={() =>
@@ -371,13 +506,42 @@ export default function AdminMissionsPage() {
                                 : ""
                             }`}
                           >
-                            <span className="text-[#9AA1B2]">
-                              N{stage.levelNumber}
-                            </span>{" "}
-                            {stage.name}
-                            <span className="ml-2 text-xs text-[#9AA1B2]">
-                              {stage.exerciseCount} exercice
-                              {stage.exerciseCount > 1 ? "s" : ""}
+                            <span className="block">
+                              <span className="text-[#9AA1B2]">
+                                Niveau {stage.levelNumber}
+                              </span>
+                              {" — "}
+                              {stage.name}
+                            </span>
+                            <span className="mt-0.5 block text-xs text-[#9AA1B2]">
+                              {stage.exercise?.name ?? "Aucun exercice"}
+                              {stage.exercise?.prospectAvatarKey
+                                ? ` · ${stage.exercise.prospectAvatarKey}`
+                                : ""}
+                            </span>
+                            <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-[#9AA1B2]">
+                              {stage.exercise && (
+                                <Badge
+                                  tone={exerciseStatusTone(
+                                    stage.exercise.status,
+                                  )}
+                                >
+                                  {stage.exercise.status}
+                                </Badge>
+                              )}
+                              <span>
+                                personnalité{" "}
+                                {stage.readiness.hasPersonality
+                                  ? "OK"
+                                  : "manquante"}
+                              </span>
+                              <span aria-hidden>·</span>
+                              <span>
+                                PromptBundle{" "}
+                                {stage.readiness.hasPublishedPrompt
+                                  ? "prêt"
+                                  : "manquant"}
+                              </span>
                             </span>
                           </button>
                           <Badge tone={missionStatusTone(stage.status)}>
@@ -402,7 +566,7 @@ export default function AdminMissionsPage() {
                           }}
                           className="min-h-11 rounded-lg px-2 py-2 text-left text-xs text-[#3E6BFF] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#3E6BFF]"
                         >
-                          + Nouvelle phase
+                          + Ajouter un niveau
                         </button>
                       </li>
                     )}
@@ -417,7 +581,7 @@ export default function AdminMissionsPage() {
           {!selection ? (
             <Card className="border border-[#1e222c] bg-[#0d1017]">
               <p className="text-sm text-[#9AA1B2]">
-                Sélectionne un thème ou une phase pour le modifier.
+                Sélectionne un thème ou un niveau pour le modifier.
               </p>
             </Card>
           ) : detailLoading ? (
@@ -429,7 +593,7 @@ export default function AdminMissionsPage() {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-semibold text-white">
-                    {selection.kind === "theme" ? "Thème" : "Phase"}
+                    {selection.kind === "theme" ? "Thème" : "Niveau"}
                   </h2>
                   <Badge tone={missionStatusTone(detailStatus)}>
                     {MISSION_STATUS_LABELS[detailStatus] ?? detailStatus}
@@ -520,11 +684,142 @@ export default function AdminMissionsPage() {
                 />
               )}
               {selection.kind === "stage" && stageForm && (
-                <StageEditor
-                  form={stageForm}
-                  onChange={setStageForm}
-                  disabled={!editable || busy}
-                />
+                <>
+                  {stageReadiness &&
+                    stageReadiness.missing.length > 0 &&
+                    detailStatus === "DRAFT" && (
+                      <div
+                        className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-3"
+                        role="status"
+                      >
+                        <p className="text-sm font-medium text-amber-100">
+                          Avant publication — éléments manquants
+                        </p>
+                        <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-50/90">
+                          {stageReadiness.missing.map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  {stageReadiness?.readyToPublish &&
+                    detailStatus === "DRAFT" && (
+                      <p className="text-sm text-emerald-300" role="status">
+                        Niveau prêt à la publication.
+                      </p>
+                    )}
+
+                  <StageEditor
+                    form={stageForm}
+                    onChange={setStageForm}
+                    disabled={!editable || busy}
+                  />
+
+                  <div className="space-y-3 rounded-xl border border-[#1e222c] p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-sm font-semibold text-white">
+                        Exercice associé
+                      </h3>
+                      {stageExercise && (
+                        <Link
+                          href={`/admin/exercises/${stageExercise.id}`}
+                          className="text-xs text-[#3E6BFF] hover:underline"
+                        >
+                          Ouvrir l&apos;éditeur
+                        </Link>
+                      )}
+                    </div>
+                    {stageExercise ? (
+                      <div className="flex flex-wrap items-center gap-2 text-sm text-[#9AA1B2]">
+                        <span className="text-white">{stageExercise.name}</span>
+                        <Badge
+                          tone={exerciseStatusTone(stageExercise.status)}
+                        >
+                          {stageExercise.status}
+                        </Badge>
+                        {stageExercise.prospectAvatarKey && (
+                          <span>{stageExercise.prospectAvatarKey}</span>
+                        )}
+                        <span>
+                          personnalité{" "}
+                          {stageExercise.hasPersonality ? "OK" : "manquante"}
+                        </span>
+                        <span>
+                          PromptBundle{" "}
+                          {stageExercise.hasPublishedPrompt
+                            ? "prêt"
+                            : "manquant"}
+                        </span>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-[#9AA1B2]">Aucun exercice</p>
+                    )}
+
+                    {editable && (
+                      <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto]">
+                        <label className={LABEL_CLASS}>
+                          Associer un exercice
+                          <select
+                            value={assignExerciseId}
+                            disabled={busy || exercisesLoading}
+                            onChange={(e) =>
+                              setAssignExerciseId(e.target.value)
+                            }
+                            className={INPUT_CLASS}
+                          >
+                            <option value="">
+                              {exercisesLoading
+                                ? "Chargement…"
+                                : "Choisir un exercice"}
+                            </option>
+                            {sortedExerciseOptions.map((ex) => {
+                              const occupiedElsewhere =
+                                Boolean(ex.missionStageId) &&
+                                ex.missionStageId !== selection.id;
+                              return (
+                                <option
+                                  key={ex.id}
+                                  value={ex.id}
+                                  disabled={occupiedElsewhere}
+                                >
+                                  {ex.name}
+                                  {!ex.missionStageId
+                                    ? " — non classé"
+                                    : ex.missionStageId === selection.id
+                                      ? " — actuel"
+                                      : " — déjà utilisé"}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </label>
+                        <div className="flex items-end">
+                          <Button
+                            type="button"
+                            disabled={
+                              busy ||
+                              !assignExerciseId ||
+                              assignExerciseId === stageExercise?.id
+                            }
+                            onClick={() => void assignExercise()}
+                          >
+                            Associer
+                          </Button>
+                        </div>
+                        <div className="flex items-end">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            disabled={busy || !stageExercise}
+                            onClick={() => void unassignExercise()}
+                          >
+                            Retirer
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
 
               {editable && (
@@ -549,7 +844,7 @@ export default function AdminMissionsPage() {
             <h2 className="text-lg font-semibold text-white">
               {createKind.entity === "theme"
                 ? "Nouveau thème"
-                : `Nouvelle phase — ${createKind.themeName}`}
+                : `Nouveau niveau — ${createKind.themeName}`}
             </h2>
             <label className={LABEL_CLASS}>
               Nom *
@@ -703,11 +998,11 @@ function StageEditor({
         />
       </label>
       <label className={LABEL_CLASS}>
-        Niveau
+        N° de niveau
         <input
           type="number"
           min={1}
-          max={99}
+          max={9999}
           value={form.levelNumber}
           disabled={disabled}
           onChange={(e) =>

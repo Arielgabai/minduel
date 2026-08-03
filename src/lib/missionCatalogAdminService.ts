@@ -2,6 +2,7 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { logAudit } from "./audit";
+import { PromptBundleStatus } from "./enums";
 import { HttpError } from "./httpError";
 import { nowIso } from "./utils";
 import {
@@ -10,9 +11,13 @@ import {
   MissionStatus,
   MissionThemeCreateSchema,
   MissionThemeUpdateSchema,
+  buildMissionLevelReadiness,
   slugifyMissionName,
   sortMissionStages,
   sortMissionThemes,
+  suggestNextLevelNumber,
+  type MissionLevelReadiness,
+  type MissionStageExerciseSummary,
   type MissionStageNode,
   type MissionThemeNode,
 } from "./missionCatalog";
@@ -22,7 +27,7 @@ import {
 // organizationId et actorId sont toujours fournis explicitement par l'appelant.
 // Chaque lecture et chaque écriture filtre sur organizationId : une ressource
 // d'une autre organisation est traitée comme inexistante (404).
-// Aucun prompt, bundle, artifact, hash, secret ou persona n'est exposé ici.
+// Aucun prompt, artifact, hash, secret ni publishedPromptBundleId n'est exposé.
 // ---------------------------------------------------------------------------
 
 // ---------------- Helpers internes ----------------
@@ -71,12 +76,36 @@ const STAGE_SELECT = {
   updatedAt: true,
 } as const;
 
+/** Champs sûrs pour readiness : jamais d'artifacts / hash / contenu de prompt. */
+const STAGE_EXERCISE_SELECT = {
+  id: true,
+  name: true,
+  status: true,
+  prospectAvatarKey: true,
+  personality: true,
+  publishedPromptBundleId: true,
+  missionStageId: true,
+  publishedPromptBundle: {
+    select: { id: true, status: true },
+  },
+} as const;
+
 type ThemeRecord = Awaited<
   ReturnType<typeof prisma.missionTheme.findFirstOrThrow>
 >;
 type StageRecord = Awaited<
   ReturnType<typeof prisma.missionStage.findFirstOrThrow>
 >;
+type StageExerciseRow = {
+  id: string;
+  name: string;
+  status: string;
+  prospectAvatarKey: string | null;
+  personality: string | null;
+  publishedPromptBundleId: string | null;
+  missionStageId: string | null;
+  publishedPromptBundle: { id: string; status: string } | null;
+};
 
 async function loadThemeOrThrow(id: string, organizationId: string) {
   const theme = await prisma.missionTheme.findFirst({
@@ -90,7 +119,7 @@ async function loadStageOrThrow(id: string, organizationId: string) {
   const stage = await prisma.missionStage.findFirst({
     where: { id, organizationId },
   });
-  if (!stage) throw new HttpError(404, "Phase introuvable.");
+  if (!stage) throw new HttpError(404, "Niveau introuvable.");
   return stage;
 }
 
@@ -135,7 +164,7 @@ async function assertUniqueStageSlug(
     },
     select: { id: true },
   });
-  if (existing) throw new HttpError(409, `Slug de phase déjà utilisé : ${slug}`);
+  if (existing) throw new HttpError(409, `Slug de niveau déjà utilisé : ${slug}`);
 }
 
 async function assertUniqueStageLevel(
@@ -156,22 +185,86 @@ async function assertUniqueStageLevel(
   }
 }
 
-async function countStageExercises(
+function hasNonEmptyPersonality(personality: string | null | undefined): boolean {
+  return Boolean(personality && personality.trim());
+}
+
+function hasPublishedPromptBundle(row: StageExerciseRow): boolean {
+  return (
+    row.publishedPromptBundleId != null &&
+    row.publishedPromptBundle?.status === PromptBundleStatus.PUBLISHED
+  );
+}
+
+/** Projection sûre : jamais de prompt, artifact, hash ni publishedPromptBundleId. */
+function toExerciseSummary(
+  row: StageExerciseRow,
+): MissionStageExerciseSummary {
+  return {
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    prospectAvatarKey: row.prospectAvatarKey,
+    hasPersonality: hasNonEmptyPersonality(row.personality),
+    hasPublishedPrompt: hasPublishedPromptBundle(row),
+  };
+}
+
+function buildStageNode(
+  stage: {
+    id: string;
+    themeId: string;
+    name: string;
+    slug: string;
+    description: string | null;
+    levelNumber: number;
+    sortOrder: number;
+    status: string;
+    createdAt: string;
+    updatedAt: string;
+  },
+  themeStatus: string,
+  exerciseRow: StageExerciseRow | null,
+): MissionStageNode {
+  const exercise = exerciseRow ? toExerciseSummary(exerciseRow) : null;
+  const readiness: MissionLevelReadiness = buildMissionLevelReadiness({
+    themeStatus,
+    exercise,
+  });
+  return {
+    id: stage.id,
+    themeId: stage.themeId,
+    name: stage.name,
+    slug: stage.slug,
+    description: stage.description,
+    levelNumber: stage.levelNumber,
+    sortOrder: stage.sortOrder,
+    status: stage.status,
+    createdAt: stage.createdAt,
+    updatedAt: stage.updatedAt,
+    exerciseCount: exercise ? 1 : 0,
+    exercise,
+    readiness,
+  };
+}
+
+async function loadStageExercise(
   stageId: string,
   organizationId: string,
-): Promise<number> {
-  return prisma.scenario.count({
+): Promise<StageExerciseRow | null> {
+  return prisma.scenario.findFirst({
     where: { missionStageId: stageId, organizationId },
+    select: STAGE_EXERCISE_SELECT,
   });
 }
 
 // ---------------- Lecture ----------------
 
-/** Arbre Thèmes → phases, avec le nombre d'exercices classés par phase. */
+/** Arbre Thèmes → niveaux, avec exercice associé et readiness (sans secrets). */
 export async function listMissionCatalog(
   organizationId: string,
 ): Promise<MissionThemeNode[]> {
-  const [themes, stages, grouped] = await Promise.all([
+  const [themes, stages, exercises] = await Promise.all([
     prisma.missionTheme.findMany({
       where: { organizationId },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -182,22 +275,28 @@ export async function listMissionCatalog(
       orderBy: [{ sortOrder: "asc" }, { levelNumber: "asc" }, { name: "asc" }],
       select: STAGE_SELECT,
     }),
-    prisma.scenario.groupBy({
-      by: ["missionStageId"],
+    prisma.scenario.findMany({
       where: { organizationId, missionStageId: { not: null } },
-      _count: { _all: true },
+      select: STAGE_EXERCISE_SELECT,
     }),
   ]);
 
-  const counts = new Map<string, number>();
-  for (const row of grouped ?? []) {
-    if (row.missionStageId) counts.set(row.missionStageId, row._count._all);
+  const exerciseByStage = new Map<string, StageExerciseRow>();
+  for (const row of exercises) {
+    if (row.missionStageId && !exerciseByStage.has(row.missionStageId)) {
+      exerciseByStage.set(row.missionStageId, row);
+    }
   }
 
-  const stageNodes: MissionStageNode[] = stages.map((stage) => ({
-    ...stage,
-    exerciseCount: counts.get(stage.id) ?? 0,
-  }));
+  const themeStatusById = new Map(themes.map((t) => [t.id, t.status]));
+
+  const stageNodes: MissionStageNode[] = stages.map((stage) =>
+    buildStageNode(
+      stage,
+      themeStatusById.get(stage.themeId) ?? MissionStatus.DRAFT,
+      exerciseByStage.get(stage.id) ?? null,
+    ),
+  );
 
   return sortMissionThemes(themes).map((theme) => ({
     ...theme,
@@ -249,8 +348,15 @@ export async function getMissionTheme(id: string, organizationId: string) {
 
 export async function getMissionStage(id: string, organizationId: string) {
   const stage = await loadStageOrThrow(id, organizationId);
-  const exerciseCount = await countStageExercises(id, organizationId);
-  return { ...stagePayload(stage), exerciseCount };
+  const theme = await loadThemeOrThrow(stage.themeId, organizationId);
+  const exerciseRow = await loadStageExercise(id, organizationId);
+  const node = buildStageNode(stage, theme.status, exerciseRow);
+  return {
+    ...stagePayload(stage),
+    exerciseCount: node.exerciseCount,
+    exercise: node.exercise,
+    readiness: node.readiness,
+  };
 }
 
 // ---------------- Création ----------------
@@ -306,14 +412,33 @@ export async function createMissionStage(
   raw: unknown,
 ) {
   const body = MissionStageCreateSchema.parse(raw);
-  // Thème hors organisation → 404 : aucune phase ne peut viser un parent étranger.
+  // Thème hors organisation → 404 : aucun niveau ne peut viser un parent étranger.
   const theme = await loadThemeOrThrow(body.themeId, organizationId);
   if (theme.status === MissionStatus.ARCHIVED) {
-    throw new HttpError(409, "Thème archivé : ajout de phase impossible.");
+    throw new HttpError(409, "Thème archivé : ajout de niveau impossible.");
   }
+
+  const rawRecord =
+    raw !== null && typeof raw === "object"
+      ? (raw as Record<string, unknown>)
+      : {};
+  const levelProvided =
+    Object.prototype.hasOwnProperty.call(rawRecord, "levelNumber") &&
+    rawRecord.levelNumber !== undefined &&
+    rawRecord.levelNumber !== null;
+
+  let levelNumber = body.levelNumber;
+  if (!levelProvided || levelNumber === undefined) {
+    const siblings = await prisma.missionStage.findMany({
+      where: { themeId: theme.id, organizationId },
+      select: { levelNumber: true },
+    });
+    levelNumber = suggestNextLevelNumber(siblings);
+  }
+
   const slug = resolveSlug(body.slug, body.name);
   await assertUniqueStageSlug(theme.id, slug);
-  await assertUniqueStageLevel(theme.id, body.levelNumber);
+  await assertUniqueStageLevel(theme.id, levelNumber);
 
   const now = nowIso();
   let created;
@@ -325,7 +450,7 @@ export async function createMissionStage(
         name: body.name,
         slug,
         description: normalizeOptional(body.description),
-        levelNumber: body.levelNumber,
+        levelNumber,
         sortOrder: body.sortOrder,
         status: MissionStatus.DRAFT,
         createdById: actorId,
@@ -337,7 +462,7 @@ export async function createMissionStage(
     if (isP2002(err)) {
       throw new HttpError(
         409,
-        `Slug ou niveau déjà utilisé dans ce thème : ${slug} / ${body.levelNumber}`,
+        `Slug ou niveau déjà utilisé dans ce thème : ${slug} / ${levelNumber}`,
       );
     }
     throw err;
@@ -349,7 +474,7 @@ export async function createMissionStage(
     action: "MISSION_STAGE_CREATE",
     targetType: "MissionStage",
     targetId: created.id,
-    metadata: { slug, themeId: theme.id, levelNumber: body.levelNumber },
+    metadata: { slug, themeId: theme.id, levelNumber },
   });
 
   return getMissionStage(created.id, organizationId);
@@ -412,7 +537,7 @@ export async function updateMissionStage(
   raw: unknown,
 ) {
   const stage = await loadStageOrThrow(id, organizationId);
-  assertEditableDraft(stage.status, "Phase");
+  assertEditableDraft(stage.status, "Niveau");
   const body = MissionStageUpdateSchema.parse(raw);
 
   const nextSlug =
@@ -500,8 +625,8 @@ export async function unpublishMissionTheme(
   if (theme.status !== MissionStatus.PUBLISHED) {
     throw new HttpError(409, "Le thème n'est pas publié.");
   }
-  // Les phases gardent leur statut : la visibilité télépro (lot N2) exigera
-  // un thème ET une phase publiés.
+  // Les niveaux gardent leur statut : la visibilité télépro exige
+  // un thème ET un niveau publiés.
   await prisma.missionTheme.update({
     where: { id },
     data: { status: MissionStatus.DRAFT, updatedAt: nowIso() },
@@ -552,16 +677,23 @@ export async function publishMissionStage(
 ) {
   const stage = await loadStageOrThrow(id, organizationId);
   if (stage.status === MissionStatus.ARCHIVED) {
-    throw new HttpError(409, "Phase archivée : publication impossible.");
+    throw new HttpError(409, "Niveau archivé : publication impossible.");
   }
   if (stage.status === MissionStatus.PUBLISHED) {
-    throw new HttpError(409, "Phase déjà publiée.");
+    throw new HttpError(409, "Niveau déjà publié.");
   }
   const theme = await loadThemeOrThrow(stage.themeId, organizationId);
-  if (theme.status !== MissionStatus.PUBLISHED) {
+  const exerciseRow = await loadStageExercise(id, organizationId);
+  const exercise = exerciseRow ? toExerciseSummary(exerciseRow) : null;
+  const readiness = buildMissionLevelReadiness({
+    themeStatus: theme.status,
+    exercise,
+  });
+  // Ne jamais auto-publier thème / exercice / prompt : refuser avec le détail.
+  if (!readiness.readyToPublish) {
     throw new HttpError(
       409,
-      "Publiez d'abord le thème parent avant la phase.",
+      `Niveau non prêt à la publication : ${readiness.missing.join(" ; ")}.`,
     );
   }
   const now = nowIso();
@@ -590,7 +722,7 @@ export async function unpublishMissionStage(
 ) {
   const stage = await loadStageOrThrow(id, organizationId);
   if (stage.status !== MissionStatus.PUBLISHED) {
-    throw new HttpError(409, "La phase n'est pas publiée.");
+    throw new HttpError(409, "Le niveau n'est pas publié.");
   }
   await prisma.missionStage.update({
     where: { id },
@@ -606,7 +738,7 @@ export async function unpublishMissionStage(
   return getMissionStage(id, organizationId);
 }
 
-/** Archive idempotente : une phase déjà archivée est renvoyée telle quelle. */
+/** Archive idempotente : un niveau déjà archivé est renvoyé tel quel. */
 export async function archiveMissionStage(
   id: string,
   organizationId: string,
@@ -655,7 +787,7 @@ export async function deleteMissionTheme(
   if (stageCount > 0) {
     throw new HttpError(
       409,
-      "Thème non vide (phases existantes) : suppression interdite.",
+      "Thème non vide (niveaux existants) : suppression interdite.",
     );
   }
   await prisma.missionTheme.delete({ where: { id } });
@@ -681,13 +813,13 @@ export async function deleteMissionStage(
       "Suppression réservée aux brouillons ; archivez sinon.",
     );
   }
-  // Aucune suppression en cascade : les exercices classés bloquent la phase
+  // Aucune suppression en cascade : les exercices classés bloquent le niveau
   // (la contrainte SQL ON DELETE RESTRICT est la seconde ligne de défense).
-  const exerciseCount = await countStageExercises(id, organizationId);
-  if (exerciseCount > 0) {
+  const exercise = await loadStageExercise(id, organizationId);
+  if (exercise) {
     throw new HttpError(
       409,
-      "Phase référencée par des exercices : déclassez-les avant suppression.",
+      "Niveau référencé par des exercices : déclassez-les avant suppression.",
     );
   }
   await prisma.missionStage.delete({ where: { id } });
@@ -699,4 +831,108 @@ export async function deleteMissionStage(
     targetId: id,
   });
   return { deleted: true as const };
+}
+
+// ---------------- Association exercice ↔ niveau ----------------
+
+/**
+ * Associe un exercice à un niveau (un niveau = au plus un exercice).
+ * Déplacer un exercice depuis un autre niveau est autorisé.
+ */
+export async function assignExerciseToStage(
+  stageId: string,
+  organizationId: string,
+  actorId: string,
+  exerciseId: string,
+) {
+  const stage = await loadStageOrThrow(stageId, organizationId);
+  if (stage.status === MissionStatus.ARCHIVED) {
+    throw new HttpError(409, "Niveau archivé : association impossible.");
+  }
+
+  const exercise = await prisma.scenario.findFirst({
+    where: { id: exerciseId, organizationId },
+    select: { id: true, missionStageId: true },
+  });
+  if (!exercise) throw new HttpError(404, "Exercice introuvable.");
+
+  if (exercise.missionStageId === stageId) {
+    return getMissionStage(stageId, organizationId);
+  }
+
+  const occupant = await prisma.scenario.findFirst({
+    where: {
+      missionStageId: stageId,
+      organizationId,
+      id: { not: exerciseId },
+    },
+    select: { id: true },
+  });
+  if (occupant) {
+    throw new HttpError(409, "Ce niveau contient déjà un exercice.");
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.scenario.update({
+        where: { id: exercise.id },
+        data: { missionStageId: stageId, updatedAt: nowIso() },
+      });
+    });
+  } catch (err) {
+    if (isP2002(err)) {
+      throw new HttpError(409, "Ce niveau contient déjà un exercice.");
+    }
+    throw err;
+  }
+
+  await logAudit({
+    organizationId,
+    actorId,
+    action: "MISSION_STAGE_ASSIGN_EXERCISE",
+    targetType: "MissionStage",
+    targetId: stageId,
+    metadata: { exerciseId },
+  });
+
+  return getMissionStage(stageId, organizationId);
+}
+
+/**
+ * Retire l'exercice d'un niveau brouillon.
+ * Interdit si le niveau est publié ou archivé.
+ */
+export async function unassignExerciseFromStage(
+  stageId: string,
+  organizationId: string,
+  actorId: string,
+) {
+  const stage = await loadStageOrThrow(stageId, organizationId);
+  if (stage.status !== MissionStatus.DRAFT) {
+    throw new HttpError(
+      409,
+      "Déclassement réservé aux niveaux brouillon (publié ou archivé interdit).",
+    );
+  }
+
+  const exercise = await loadStageExercise(stageId, organizationId);
+  if (!exercise) {
+    return getMissionStage(stageId, organizationId);
+  }
+
+  await prisma.scenario.update({
+    where: { id: exercise.id },
+    data: { missionStageId: null, updatedAt: nowIso() },
+  });
+
+  await logAudit({
+    organizationId,
+    actorId,
+    action: "MISSION_STAGE_UNASSIGN_EXERCISE",
+    targetType: "MissionStage",
+    targetId: stageId,
+    metadata: { exerciseId: exercise.id },
+  });
+
+  return getMissionStage(stageId, organizationId);
 }

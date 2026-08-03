@@ -179,7 +179,7 @@ export type MetaFormState = {
   failureConditions: string;
   targetDurationSec: number;
   traineeBrief: string;
-  /** "" = « Non classé » ; sinon identifiant de phase. */
+  /** "" = « Non classé » ; sinon identifiant de niveau. */
   missionStageId: string;
   /** "" = aucun avatar ; sinon clé du catalogue local. */
   prospectAvatarKey: string;
@@ -275,7 +275,7 @@ export function buildMetadataPatchPayload(meta: MetaFormState) {
   return payload;
 }
 
-// ---------------- Classement Missions (thème → phase) ----------------
+// ---------------- Classement Missions (thème → niveau) ----------------
 
 export type MissionFilterState = {
   /** "" = tous ; MISSION_UNCLASSIFIED = non classés. */
@@ -283,7 +283,7 @@ export type MissionFilterState = {
   stageId: string;
 };
 
-/** Options de phases proposées pour un thème donné (vide si aucun thème). */
+/** Options de niveaux proposés pour un thème donné (vide si aucun thème). */
 export function resolveStageOptions(
   themes: MissionThemeNode[],
   themeId: string,
@@ -292,7 +292,7 @@ export function resolveStageOptions(
   return themes.find((t) => t.id === themeId)?.stages ?? [];
 }
 
-/** Thème parent d'une phase, ou "" si la phase est inconnue/absente. */
+/** Thème parent d'un niveau, ou "" si le niveau est inconnu/absent. */
 export function resolveThemeIdForStage(
   themes: MissionThemeNode[],
   stageId: string,
@@ -305,8 +305,8 @@ export function resolveThemeIdForStage(
 }
 
 /**
- * Changement de thème dans l'UI : une phase devenue incompatible est
- * réinitialisée (jamais d'envoi d'une phase d'un autre thème).
+ * Changement de thème dans l'UI : un niveau devenu incompatible est
+ * réinitialisé (jamais d'envoi d'un niveau d'un autre thème).
  */
 export function resolveStageAfterThemeChange(
   themes: MissionThemeNode[],
@@ -327,17 +327,46 @@ export function formatListClassification(item: AdminExerciseListItem): string {
 }
 
 /**
- * Une phase archivée (ou dont le thème est archivé) reste affichée pour ne
- * jamais masquer un exercice, mais n'est plus proposée comme cible.
+ * Collecte les missionStageId déjà pris par d'autres exercices
+ * (exclut currentExerciseId pour laisser l'exercice en cours resélectionner
+ * son propre niveau).
+ */
+export function collectOccupiedStageIds(
+  exercises: { id: string; missionStageId?: string | null }[],
+  currentExerciseId?: string,
+): Set<string> {
+  const occupied = new Set<string>();
+  for (const exercise of exercises) {
+    if (currentExerciseId && exercise.id === currentExerciseId) continue;
+    if (exercise.missionStageId) occupied.add(exercise.missionStageId);
+  }
+  return occupied;
+}
+
+/**
+ * Un niveau archivé (ou dont le thème est archivé) reste affiché pour ne
+ * jamais masquer un exercice, mais n'est plus proposé comme cible.
+ * Un niveau déjà occupé par un autre exercice n'est pas sélectionnable
+ * (sauf s'il s'agit du niveau courant de l'exercice édité).
  */
 export function isStageSelectable(
   theme: MissionThemeNode,
   stage: MissionStageNode,
+  opts?: { currentStageId?: string; occupiedStageIds?: ReadonlySet<string> },
 ): boolean {
-  return (
-    !isMissionArchivedReadOnly(theme.status) &&
-    !isMissionArchivedReadOnly(stage.status)
-  );
+  if (
+    isMissionArchivedReadOnly(theme.status) ||
+    isMissionArchivedReadOnly(stage.status)
+  ) {
+    return false;
+  }
+  if (
+    opts?.occupiedStageIds?.has(stage.id) &&
+    stage.id !== opts.currentStageId
+  ) {
+    return false;
+  }
+  return true;
 }
 
 /** Ne pas effacer la confirmation restore après un échec API. */

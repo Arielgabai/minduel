@@ -50,7 +50,7 @@ export default async function MissionsPage() {
       <header className="mb-6">
         <h1 className="text-2xl font-bold">Missions</h1>
         <p className="mt-1 text-sm text-white/50">
-          Thèmes → niveaux → exercices. Progression réelle sur tes assignations.
+          Thèmes → niveaux. Progression réelle sur tes assignations.
         </p>
         {catalog.allCompleted ? (
           <p className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">

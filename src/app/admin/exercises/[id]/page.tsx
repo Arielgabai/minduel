@@ -16,6 +16,7 @@ import {
   shouldDismissRestoreUi,
   type AdminExerciseDetail,
   type ApplyExerciseSync,
+  collectOccupiedStageIds,
   resolveStageAfterThemeChange,
   resolveStageOptions,
   resolveThemeIdForStage,
@@ -116,7 +117,7 @@ export default function AdminExerciseDetailPage() {
     [],
   );
 
-  // Catalogue Missions : alimente les sélecteurs thème / phase de l'éditeur.
+  // Catalogue Missions : alimente les sélecteurs thème / niveau de l'éditeur.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -137,13 +138,29 @@ export default function AdminExerciseDetailPage() {
     };
   }, []);
 
-  // Le thème parent est déduit de la phase enregistrée dès que l'arbre arrive.
+  // Le thème parent est déduit du niveau enregistré dès que l'arbre arrive.
   useEffect(() => {
     if (!missionThemeId && meta.missionStageId) {
       const owner = resolveThemeIdForStage(themes, meta.missionStageId);
       if (owner) setMissionThemeId(owner);
     }
   }, [themes, meta.missionStageId, missionThemeId]);
+
+  /** Niveaux déjà pris (via l'arbre catalogue) — hors exercice courant. */
+  const occupiedStageIds = useMemo(() => {
+    const summaries: { id: string; missionStageId?: string | null }[] = [];
+    for (const theme of themes) {
+      for (const stage of theme.stages) {
+        if (stage.exercise?.id) {
+          summaries.push({
+            id: stage.exercise.id,
+            missionStageId: stage.id,
+          });
+        }
+      }
+    }
+    return collectOccupiedStageIds(summaries, id);
+  }, [themes, id]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -238,9 +255,13 @@ export default function AdminExerciseDetailPage() {
       });
       const json = await res.json().catch(() => null);
       if (!res.ok) {
-        setMetaError(
+        const apiMessage =
           json?.error?.message ??
-            "Enregistrement impossible. Réessaie ou contacte un administrateur.",
+          "Enregistrement impossible. Réessaie ou contacte un administrateur.";
+        setMetaError(
+          res.status === 409
+            ? `Niveau indisponible : ${apiMessage}`
+            : apiMessage,
         );
         return;
       }
@@ -514,7 +535,7 @@ export default function AdminExerciseDetailPage() {
             <input className={fieldCls} disabled={archived || busy} value={meta.slug} onChange={(e) => setMeta({ ...meta, slug: e.target.value })} />
           </label>
           <label className={labelCls}>
-            Niveau
+            Difficulté
             <select className={fieldCls} disabled={archived || busy} value={meta.level} onChange={(e) => setMeta({ ...meta, level: e.target.value })}>
               <option value="FACILE">FACILE</option>
               <option value="MOYEN">MOYEN</option>
@@ -530,7 +551,7 @@ export default function AdminExerciseDetailPage() {
             </select>
           </label>
           <label className={labelCls}>
-            Mission level
+            Ordre legacy
             <input type="number" min={1} max={20} className={fieldCls} disabled={archived || busy} value={meta.missionLevel} onChange={(e) => setMeta({ ...meta, missionLevel: Number(e.target.value) })} />
           </label>
           <label className={labelCls}>
@@ -554,7 +575,7 @@ export default function AdminExerciseDetailPage() {
               onChange={(e) => {
                 const next = e.target.value;
                 setMissionThemeId(next);
-                // Une phase devenue incompatible est réinitialisée.
+                // Un niveau devenu incompatible est réinitialisé.
                 setMeta({
                   ...meta,
                   missionStageId: resolveStageAfterThemeChange(
@@ -574,7 +595,7 @@ export default function AdminExerciseDetailPage() {
             </select>
           </label>
           <label className={labelCls}>
-            Phase
+            Niveau
             <select
               className={fieldCls}
               disabled={archived || busy || !missionThemeId}
@@ -587,15 +608,22 @@ export default function AdminExerciseDetailPage() {
               {resolveStageOptions(themes, missionThemeId).map((stage) => {
                 const theme = themes.find((t) => t.id === missionThemeId);
                 const selectable = theme
-                  ? isStageSelectable(theme, stage)
+                  ? isStageSelectable(theme, stage, {
+                      currentStageId: meta.missionStageId,
+                      occupiedStageIds,
+                    })
                   : false;
+                const occupied =
+                  occupiedStageIds.has(stage.id) &&
+                  stage.id !== meta.missionStageId;
                 return (
                   <option
                     key={stage.id}
                     value={stage.id}
-                    disabled={!selectable && stage.id !== meta.missionStageId}
+                    disabled={!selectable}
                   >
                     N{stage.levelNumber} — {stage.name}
+                    {occupied ? " — déjà pris" : ""}
                   </option>
                 );
               })}

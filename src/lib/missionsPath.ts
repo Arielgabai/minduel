@@ -18,7 +18,7 @@ export type MissionNodeVariant =
 
 /**
  * Progression globale en pourcentage (borné 0–100).
- * Aucun total codé en dur : dépend uniquement des exercices réellement présents.
+ * Aucun total codé en dur : dépend uniquement des exercices / niveaux réellement présents.
  */
 export function missionProgressPct(completed: number, total: number): number {
   if (!Number.isFinite(total) || total <= 0) return 0;

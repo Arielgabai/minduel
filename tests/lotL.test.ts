@@ -126,7 +126,12 @@ describe("Lot L — Missions parcours (dynamique, lot I)", () => {
   it("MissionsPath : nœuds dynamiques, cadenas, cibles tactiles, pas de chiffres maquette", () => {
     const src = read("src/app/app/missions/MissionsPath.tsx");
     expect(src).toContain("view.groups.map");
-    expect(src).toContain("missionProgressPct");
+    // N4 : progression sur la page thème ; le path affiche les portraits de niveaux.
+    expect(src).toContain("Niveau");
+    expect(src).toContain("prepareHref");
+    const themePage = read("src/app/app/missions/[themeSlug]/page.tsx");
+    expect(themePage).toContain("missionProgressPct");
+    expect(themePage).toContain("MissionsPath");
     expect(src).toContain("missionNodeVariant");
     expect(src).toContain("isLaunchable");
     expect(src).toContain("🔒");

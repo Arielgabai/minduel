@@ -4,7 +4,7 @@ import { requireTelepro } from "@/lib/auth";
 import { EmptyState } from "@/components/ui";
 import { loadTeleproMissionThemeView } from "@/lib/teleproMissionsService";
 import { missionProgressPct } from "@/lib/missionsPath";
-import type { MissionStageState } from "@/lib/teleproMissions";
+import { MissionsPath } from "../MissionsPath";
 
 export default async function MissionThemePage({
   params,
@@ -68,106 +68,11 @@ export default async function MissionThemePage({
       {theme.stages.length === 0 ? (
         <EmptyState
           title="Aucun niveau disponible"
-          description="Aucune phase publiée n'est encore assignée dans ce thème."
+          description="Aucun niveau publié n'est encore assigné dans ce thème."
         />
       ) : (
-        <ol className="relative space-y-4 border-l border-white/10 pl-6">
-          {theme.stages.map((stage) => {
-            const locked = stage.state === "LOCKED";
-            const href = `/app/missions/${theme.slug}/${stage.slug}`;
-            const body = (
-              <div
-                className={
-                  locked
-                    ? "rounded-2xl border border-white/10 bg-white/[0.02] p-4 opacity-60"
-                    : "rounded-2xl border border-white/10 bg-gradient-to-br from-[#12141c] to-[#1a1030] p-4"
-                }
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/45">
-                      Niveau {stage.levelNumber}
-                    </p>
-                    <h2 className="mt-1 text-lg font-semibold text-white">
-                      {stage.name}
-                    </h2>
-                    {stage.description ? (
-                      <p className="mt-1 text-sm text-white/55">
-                        {stage.description}
-                      </p>
-                    ) : null}
-                    <p className="mt-2 text-sm text-white/50">
-                      {stage.completedCount}/{stage.exerciseCount} exercices
-                      {" · "}
-                      {stageStateLabel(stage.state)}
-                    </p>
-                  </div>
-                  {locked ? (
-                    <span
-                      className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/15 text-white/50"
-                      aria-label="Niveau verrouillé"
-                    >
-                      🔒
-                    </span>
-                  ) : stage.state === "COMPLETED" ? (
-                    <span
-                      className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-emerald-400/40 bg-emerald-500/15 text-emerald-300"
-                      aria-label="Niveau terminé"
-                    >
-                      ✓
-                    </span>
-                  ) : (
-                    <span
-                      className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-flame-400/40 bg-flame-500/10 text-flame-300"
-                      aria-hidden
-                    >
-                      →
-                    </span>
-                  )}
-                </div>
-                <div
-                  className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10"
-                  role="progressbar"
-                  aria-valuenow={stage.progressPct}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-label={`Progression du niveau ${stage.levelNumber}`}
-                >
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-violet-500 to-electric-400"
-                    style={{ width: `${stage.progressPct}%` }}
-                  />
-                </div>
-              </div>
-            );
-
-            return (
-              <li key={stage.id} className="relative">
-                <span
-                  className="absolute -left-[1.9rem] top-6 h-3 w-3 rounded-full border border-white/30 bg-ink-950"
-                  aria-hidden
-                />
-                {locked ? (
-                  body
-                ) : (
-                  <Link
-                    href={href}
-                    className="block focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-electric-400"
-                  >
-                    {body}
-                  </Link>
-                )}
-              </li>
-            );
-          })}
-        </ol>
+        <MissionsPath theme={theme} />
       )}
     </div>
   );
-}
-
-function stageStateLabel(state: MissionStageState): string {
-  if (state === "COMPLETED") return "Terminé";
-  if (state === "OPEN") return "Disponible";
-  return "Verrouillé";
 }

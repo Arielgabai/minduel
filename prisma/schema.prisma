@@ -179,12 +179,14 @@ model Scenario {
   assignments           ScenarioAssignment[]
   simulations           Simulation[]
   // FK composite : scenario.organizationId === missionStage.organizationId.
-  // Restrict (jamais Cascade / SetNull) : supprimer une phase ne doit jamais
+  // Restrict (jamais Cascade / SetNull) : supprimer un niveau ne doit jamais
   // supprimer ni déclasser silencieusement un exercice. Le déclassement passe
-  // par l'API admin (missionStageId = null) avant toute suppression de phase.
+  // par l'API admin (missionStageId = null) avant toute suppression de niveau.
+  // Unicité (missionStageId, organizationId) : un niveau = au plus un exercice.
   missionStage          MissionStage?        @relation(fields: [missionStageId, organizationId], references: [id, organizationId], onDelete: Restrict)
 
   @@unique([organizationId, slug])
+  @@unique([missionStageId, organizationId])
   @@index([organizationId])
   @@index([status])
   @@index([organizationId, missionLevel, sortOrder])
@@ -589,7 +591,8 @@ model SkillArticleMapping {
 }
 
 // ---------------------------------------------------------------------------
-// Catalogue Missions (lot N1) : Thème → phase/niveau → exercices.
+// Catalogue Missions (lots N1/N4) : Thème → niveaux (un exercice = un niveau).
+// MissionStage reste le modèle technique du niveau ; cardinalité 1:1 avec Scenario.
 // Statuts applicatifs : DRAFT | PUBLISHED | ARCHIVED (voir src/lib/missionCatalog.ts).
 // Aucun contenu de démonstration n'est créé : le catalogue est intégralement
 // administrable par PLATFORM_ADMIN. Les exercices non classés restent visibles.
@@ -615,7 +618,7 @@ model MissionTheme {
   stages       MissionStage[]
 
   @@unique([organizationId, slug])
-  // Ancre FK composite : empêche une phase d'une autre organisation
+  // Ancre FK composite : empêche un niveau d'une autre organisation
   @@unique([id, organizationId])
   @@index([organizationId, status, sortOrder])
 }
@@ -639,7 +642,8 @@ model MissionStage {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   // FK composite : stage.organizationId === theme.organizationId
   theme        MissionTheme @relation(fields: [themeId, organizationId], references: [id, organizationId], onDelete: Restrict)
-  scenarios    Scenario[]
+  // N4 : un niveau = au plus un exercice (relation 1:1 optionnelle).
+  scenario     Scenario?
 
   @@unique([themeId, slug])
   // Un numéro de niveau unique par thème : l'ordre pédagogique reste lisible.

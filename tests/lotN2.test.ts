@@ -57,7 +57,8 @@ function exercise(
     status: ScenarioStatus.PUBLISHED,
     organizationId: ORG,
     missionStageId: null,
-    prospectAvatarKey: null,
+    prospectAvatarKey: "lena",
+    hasPublishedPrompt: true,
     ...overrides,
   };
 }
@@ -100,8 +101,8 @@ function stage(
   };
 }
 
-describe("lot N2 — catalogue Thème → Phase → Exercice", () => {
-  it("1-2. regroupe thème → phase → exercice dans un ordre déterministe", () => {
+describe("lot N2 — catalogue Thème → Niveau → Exercice", () => {
+  it("1-2. regroupe thème → niveau → exercice (au plus un exercice par niveau)", () => {
     const themes = [
       theme({ id: "t2", slug: "b", name: "Bravo", sortOrder: 2 }),
       theme({ id: "t1", slug: "a", name: "Alpha", sortOrder: 1 }),
@@ -113,6 +114,7 @@ describe("lot N2 — catalogue Thème → Phase → Exercice", () => {
         slug: "n2",
         name: "Niveau 2",
         levelNumber: 2,
+        sortOrder: 1,
       }),
       stage({
         id: "s1",
@@ -120,6 +122,15 @@ describe("lot N2 — catalogue Thème → Phase → Exercice", () => {
         slug: "n1",
         name: "Niveau 1",
         levelNumber: 1,
+        sortOrder: 0,
+      }),
+      stage({
+        id: "s1b",
+        themeId: "t1",
+        slug: "n1b",
+        name: "Niveau 1b",
+        levelNumber: 1,
+        sortOrder: 1,
       }),
       stage({
         id: "s3",
@@ -133,14 +144,14 @@ describe("lot N2 — catalogue Thème → Phase → Exercice", () => {
       exercise({
         id: "e2",
         name: "B",
-        missionStageId: "s1",
-        sortOrder: 2,
+        missionStageId: "s1b",
+        sortOrder: 0,
       }),
       exercise({
         id: "e1",
         name: "A",
         missionStageId: "s1",
-        sortOrder: 1,
+        sortOrder: 0,
       }),
       exercise({
         id: "e3",
@@ -162,14 +173,23 @@ describe("lot N2 — catalogue Thème → Phase → Exercice", () => {
       stages,
     );
     expect(catalog.themes.map((t) => t.slug)).toEqual(["a", "b"]);
-    expect(catalog.themes[0]!.stages.map((s) => s.slug)).toEqual(["n1", "n2"]);
+    expect(catalog.themes[0]!.stages.map((s) => s.slug)).toEqual([
+      "n1",
+      "n1b",
+      "n2",
+    ]);
     expect(catalog.themes[0]!.stages[0]!.exercises.map((e) => e.id)).toEqual([
       "e1",
+    ]);
+    expect(catalog.themes[0]!.stages[1]!.exercises.map((e) => e.id)).toEqual([
       "e2",
     ]);
+    for (const st of catalog.themes[0]!.stages) {
+      expect(st.exercises.length).toBeLessThanOrEqual(1);
+    }
   });
 
-  it("5-8. exclut thèmes/phases DRAFT et ARCHIVED", () => {
+  it("5-8. exclut thèmes/niveaux DRAFT et ARCHIVED", () => {
     const catalog = buildTeleproMissionsCatalogView(
       [
         exercise({ id: "e1", name: "A", missionStageId: "s-pub" }),
@@ -224,7 +244,7 @@ describe("lot N2 — catalogue Thème → Phase → Exercice", () => {
     expect(catalog.totalCount).toBe(1);
   });
 
-  it("9-10. compatibilité non classée + regroupement synthétique par missionLevel", () => {
+  it("9-10. compatibilité non classée + un niveau synthétique par exercice", () => {
     const catalog = buildTeleproMissionsCatalogView(
       [
         exercise({ id: "u1", name: "U1", missionLevel: 1, missionStageId: null }),
@@ -243,9 +263,11 @@ describe("lot N2 — catalogue Thème → Phase → Exercice", () => {
     const legacy = catalog.themes.find((t) => t.isLegacy)!;
     expect(legacy.name).toBe(LEGACY_THEME_NAME);
     expect(legacy.slug).toBe(LEGACY_THEME_SLUG);
-    expect(legacy.stages.map((s) => s.levelNumber)).toEqual([1, 3]);
-    expect(legacy.stages[0]!.slug).toBe(legacyStageSlug(1));
+    expect(legacy.stages.map((s) => s.levelNumber)).toEqual([1, 2]);
+    expect(legacy.stages[0]!.slug).toBe(legacyStageSlug("u1"));
+    expect(legacy.stages[1]!.slug).toBe(legacyStageSlug("u3"));
     expect(legacy.stages[1]!.exercises[0]!.id).toBe("u3");
+    expect(legacy.stages.every((s) => s.exercises.length === 1)).toBe(true);
     expect(findThemeInCatalog(catalog, "cold")).not.toBeNull();
   });
 
@@ -662,20 +684,27 @@ describe("lot N2 — service et pages", () => {
     expect(src).toContain("prospectAvatarKey: true");
     expect(src).toContain('status: "PUBLISHED"');
     expect(src).not.toContain("secretInfos");
-    expect(src).not.toContain("artifacts");
-    expect(src).not.toContain("contentHash");
+    expect(src).not.toMatch(/artifacts\s*:/);
+    expect(src).not.toMatch(/contentHash\s*:/);
+    expect(src).toContain("jamais artifacts");
   });
 
   it("pages missions catalogue / niveaux / parcours", () => {
     expect(read("src/app/app/missions/page.tsx")).toContain("Voir les niveaux");
-    expect(read("src/app/app/missions/[themeSlug]/page.tsx")).toContain(
-      "loadTeleproMissionThemeView",
+    const themePage = read("src/app/app/missions/[themeSlug]/page.tsx");
+    expect(themePage).toContain("loadTeleproMissionThemeView");
+    expect(themePage).toContain("MissionsPath");
+    expect(themePage).not.toContain("theme.stages.map");
+    const stagePage = read(
+      "src/app/app/missions/[themeSlug]/[stageSlug]/page.tsx",
     );
-    expect(
-      read("src/app/app/missions/[themeSlug]/[stageSlug]/page.tsx"),
-    ).toContain("loadTeleproMissionStageView");
-    expect(read("src/app/app/missions/MissionsPath.tsx")).toContain(
-      "ProspectAvatar",
-    );
+    expect(stagePage).toContain("loadTeleproMissionStageView");
+    expect(stagePage).toContain("redirect");
+    expect(stagePage).toContain("/app/prepare/");
+    expect(stagePage).toContain("notFound");
+    const pathSrc = read("src/app/app/missions/MissionsPath.tsx");
+    expect(pathSrc).toContain("ProspectAvatar");
+    expect(pathSrc).toContain("prepareHref");
+    expect(pathSrc).toMatch(/\/prepare\//);
   });
 });

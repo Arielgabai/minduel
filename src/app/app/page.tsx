@@ -62,7 +62,7 @@ export default async function TeleproHome() {
               </p>
             ) : (
               <p className="mt-2 text-sm text-white/45">
-                Continue ton parcours missions.
+                Continue : thèmes → niveaux.
               </p>
             )}
           </Card>
