@@ -29,6 +29,12 @@ export default async function AdminLayout({
             Exercices
           </Link>
           <Link
+            href="/admin/missions"
+            className="block rounded-xl px-3 py-2.5 text-sm text-[#9AA1B2] hover:bg-white/5 hover:text-white"
+          >
+            Parcours
+          </Link>
+          <Link
             href="/admin/skills"
             className="block rounded-xl px-3 py-2.5 text-sm text-[#9AA1B2] hover:bg-white/5 hover:text-white"
           >

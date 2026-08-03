@@ -124,12 +124,14 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 | **K** | Débrief en 4 onglets + liens Skills (données persistées uniquement) | **Livré** |
 | **L** | Alignement visuel Missions / appel / fin d’exercice | **Livré** |
 | **M** | Progression avancée (Tendances, Comparatif, Diagnostic, Badges) | **Livré** |
-| **Ultérieur** | Upload manuel + analyse d’appels réels + écart simulé/réel (coûts IA) | Hors feuille immédiate |
+| **N1** | Catalogue Missions administrable (thèmes, phases, avatars) | **Livré** (migration non exécutée) |
+| **N2** | Rendu télépro Missions + portraits définitifs | À faire |
+| **Ultérieur** | Upload manuel + analyse d'appels réels + écart simulé/réel (coûts IA) | Hors feuille immédiate |
 | **Reporté** | Ringover (aucune connexion, synchro, env, route, ni mention « disponible ») | Reporté |
 
-**Contenu Skills :** intégralement administrable ; **aucune donnée de production Skills n’a été créée** ni seedée au moment des lots J–M. La migration Skills a été **appliquée en production** lors du déploiement V2 (voir LOT RELEASE-CLOSE) ; aucun seed / backfill Skills.
+**Contenu Skills :** intégralement administrable ; **aucune donnée de production Skills n'a été créée** ni seedée au moment des lots J–M. La migration Skills a été **appliquée en production** lors du déploiement V2 (voir LOT RELEASE-CLOSE) ; aucun seed / backfill Skills.
 
-**Prochain lot recommandé :** surveillance ops post-V2 (baseline `failed: 2`, Auto-Deploy OFF). Lots H–M livrés et déployés en production (commit `9d9b38bc…`).
+**Prochain lot recommandé :** **LOT N2** (rendu télépro Missions sur le catalogue N1 + portraits définitifs), après revue et éventuelle exécution contrôlée de la migration `20260803112000_mission_catalog`. Surveillance ops post-V2 inchangée (baseline `failed: 2`, Auto-Deploy OFF).
 
 ## Questions ouvertes (3)
 
@@ -569,3 +571,87 @@ Additive uniquement (4 tables neuves, zéro `ALTER` sur une table existante, zé
 **Fichiers touchés :** `docs/refonte-minduel/RELEASE_RUNBOOK.md`, `docs/refonte-minduel/STATE.md` uniquement.
 
 **Non réalisé dans ce lot documentaire :** aucun déploiement, migration, seed, backfill, promotion, base, Render, OpenAI, réseau, `.env`, dépendance, `git add` / commit / push.
+
+## Lot N1 — Catalogue Missions administrable (03/08/2026)
+
+**Objectif unique :** fondation Prisma + admin permettant de classer chaque exercice dans **Thème → phase/niveau → ordre → avatar de prospect**. Aucune refonte des pages télépro Missions (reportée au LOT N2).
+
+### Modèles créés
+
+- `MissionTheme` : `id`, `organizationId`, `name`, `slug`, `description?`, `iconKey`, `sortOrder`, `status` (`DRAFT` | `PUBLISHED` | `ARCHIVED`), timestamps, `publishedAt?`, `archivedAt?` ; unicité `(organizationId, slug)` ; ancre `(id, organizationId)` ; index `(organizationId, status, sortOrder)`.
+- `MissionStage` : phase/niveau rattachée à un thème ; unicités `(themeId, slug)` et `(themeId, levelNumber)` ; FK composite `(themeId, organizationId)` → `MissionTheme` (`onDelete: Restrict`) ; ancre `(id, organizationId)`.
+- `Scenario` (additif uniquement) : `missionStageId?`, `prospectAvatarKey?` ; FK composite `(missionStageId, organizationId)` → `MissionStage` avec **`ON DELETE RESTRICT`** (jamais `CASCADE` ni `SET NULL` : une FK composite portant `organizationId` ne peut pas annuler uniquement la phase). Les champs legacy `missionLevel` et `sortOrder` sont **conservés**.
+
+### Migration
+
+- Fichier : `prisma/migrations/20260803112000_mission_catalog/migration.sql`.
+- Additive : colonnes nullable sur `Scenario`, tables, index, FK. **Aucun INSERT, seed, backfill, DROP, RENAME**.
+- Rollback manuel documenté en en-tête (rollback applicatif **avant** le SQL ; ne jamais supprimer d'exercice).
+- **Créée, jamais exécutée** (`migrate dev` / `deploy` / `db push` / reset / seed : non lancés). La production n'a **pas** été migrée dans ce lot.
+
+### Compatibilité legacy
+
+- Après migration, tous les exercices existants auront `missionStageId = null` et `prospectAvatarKey = null`.
+- Ils restent visibles, modifiables, utilisables par le runtime télépro actuel, et apparaissent comme **« Non classé »** dans les filtres admin.
+- Aucun thème / phase de démonstration n'est créé automatiquement.
+
+### Routes admin
+
+| Surface | Rôle |
+|---------|------|
+| `GET\|POST /api/admin/mission-catalog` | Arbre thèmes → phases ; création thème/phase |
+| `GET\|PATCH\|DELETE\|POST /api/admin/mission-catalog/[id]` | Lecture, mise à jour, hard-delete DRAFT, actions `publish` / `unpublish` / `archive` |
+| `/admin/missions` | UI Parcours (arbre + éditeur, confirmations, lecture seule si archivé) |
+| Layout admin | Destination **Parcours** |
+| `/admin/exercises` | Filtres thème / phase / Non classé ; colonnes Thème, Phase, Avatar |
+| Éditeur exercice | Sélection thème → phase filtrée ; avatar ; retrait classement (`null`) |
+
+Toutes les routes API sont protégées par `requirePlatformAdmin`. Enveloppes `{ data }` / `{ error }`. Zod strict.
+
+### Catalogue d'avatars
+
+- Module local `src/lib/prospectAvatars.ts` : 10 clés stables (`alex`, `sarah`, …), libellés, initiales, palettes CSS.
+- Composant `ProspectAvatar` : fallback déterministe, taille configurable, `aria-hidden` décoratif, **aucun** `dangerouslySetInnerHTML`, aucune URL distante / upload / S3.
+- Toute clé inconnue reçue par l'API → erreur de validation (422) ; jamais stockée arbitrairement.
+- Portraits illustrés définitifs : **LOT N2**.
+
+### Sécurité multi-tenant
+
+- Isolation stricte par `organizationId` (404 hors org) ; FK composites DB + gardes applicatives.
+- Impossible de créer une phase sous un thème étranger, d'affecter un exercice à une phase étrangère, ou de contourner l'org par identifiant.
+- Phase non publiable si thème non publié ; archive idempotente ; hard-delete bloqué si phases/exercices référencent ; réponses sans prompts / artifacts / hash / secrets / personas.
+- Exercice archivé : métadonnées (dont classement) non modifiables (409).
+
+### Tests
+
+| Suite | Résultat |
+|-------|----------|
+| `tests/missionCatalogAdmin.test.ts` | OK — **24** tests (CRUD, isolation, publication, archive, hard-delete, anti-fuite, migration additive / FK / anciennes migrations intactes, pages, avatars) |
+| `tests/adminExercisesUi.test.ts` | OK — **35** tests (helpers classement + assertions UI `!res.ok` / exports / avatar) |
+| `tests/exerciseAdmin.test.ts` | OK — **24** tests (affectation, inter-org, null, avatar, archivé, filtres liste) |
+| Suite complète `npm test` | **435** tests passés / **26** fichiers |
+
+### Vérifications locales
+
+| Commande | Résultat |
+|----------|----------|
+| `npm test -- tests/missionCatalogAdmin.test.ts tests/adminExercisesUi.test.ts tests/exerciseAdmin.test.ts` | OK — **83** / 83 |
+| `npx prisma validate` | OK — schéma valide |
+| `npx tsc --noEmit` | OK |
+| `npm run lint --if-present` | OK — No ESLint warnings or errors |
+| `npm test` | OK — **435** tests / 26 fichiers |
+| `npm run build` | OK — routes `/admin/missions`, `/api/admin/mission-catalog` générées |
+| `git diff --check` | OK |
+| Encodage | Nouveaux fichiers du lot : UTF-8 sans BOM + LF ; fichiers déjà suivis : worktree CRLF (`core.autocrlf=true`), index LF |
+
+### Reporté au LOT N2
+
+- Rendu télépro Missions (parcours, nœuds, avatars illustrés) branché sur `MissionTheme` / `MissionStage`.
+- Portraits de prospect définitifs (assets) à la place du rendu CSS N1.
+- Exécution de la migration en production, seed, backfill, déploiement Render, commit.
+
+### Confirmations
+
+- **Aucune** migration / base / seed / backfill / réseau / OpenAI dans ce lot.
+- **Aucun** commit.
+- Migration **non exécutée** ; production **non migrée**.

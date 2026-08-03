@@ -3,6 +3,14 @@
  * Aucun React / Next / Prisma / DB / auth / réseau.
  */
 
+import {
+  MISSION_UNCLASSIFIED,
+  formatMissionClassification,
+  isMissionArchivedReadOnly,
+  type MissionStageNode,
+  type MissionThemeNode,
+} from "./missionCatalog";
+
 export const LIST_SENSITIVE_KEYS = [
   "artifacts",
   "contentHash",
@@ -25,6 +33,12 @@ export type AdminExerciseListItem = {
   callType?: string;
   updatedAt: string;
   createdAt: string;
+  // Classement Missions (lot N1) : null = « Non classé ».
+  missionStageId?: string | null;
+  missionStageName?: string | null;
+  missionThemeId?: string | null;
+  missionThemeName?: string | null;
+  prospectAvatarKey?: string | null;
 };
 
 export function listItemLooksSafe(item: Record<string, unknown>): boolean {
@@ -64,6 +78,11 @@ export type AdminExerciseDetail = {
   failureConditions: string | null;
   targetDurationSec: number;
   traineeBrief: string | null;
+  missionStageId?: string | null;
+  missionStageName?: string | null;
+  missionThemeId?: string | null;
+  missionThemeName?: string | null;
+  prospectAvatarKey?: string | null;
   referenceCounts?: { simulations: number; assignments: number };
   currentBundle: null | {
     id: string;
@@ -160,6 +179,10 @@ export type MetaFormState = {
   failureConditions: string;
   targetDurationSec: number;
   traineeBrief: string;
+  /** "" = « Non classé » ; sinon identifiant de phase. */
+  missionStageId: string;
+  /** "" = aucun avatar ; sinon clé du catalogue local. */
+  prospectAvatarKey: string;
 };
 
 export type ApplyExerciseSync = {
@@ -208,6 +231,8 @@ export function metaFormFromExercise(ex: AdminExerciseDetail): MetaFormState {
     failureConditions: ex.failureConditions ?? "",
     targetDurationSec: ex.targetDurationSec,
     traineeBrief: ex.traineeBrief ?? "",
+    missionStageId: ex.missionStageId ?? "",
+    prospectAvatarKey: ex.prospectAvatarKey ?? "",
   };
 }
 
@@ -242,9 +267,77 @@ export function buildMetadataPatchPayload(meta: MetaFormState) {
     failureConditions: meta.failureConditions,
     targetDurationSec: Number(meta.targetDurationSec),
     traineeBrief: meta.traineeBrief,
+    // "" → null : l'exercice redevient « Non classé » / sans avatar.
+    missionStageId: meta.missionStageId ? meta.missionStageId : null,
+    prospectAvatarKey: meta.prospectAvatarKey ? meta.prospectAvatarKey : null,
   };
   if (meta.slug.trim()) payload.slug = meta.slug.trim();
   return payload;
+}
+
+// ---------------- Classement Missions (thème → phase) ----------------
+
+export type MissionFilterState = {
+  /** "" = tous ; MISSION_UNCLASSIFIED = non classés. */
+  themeId: string;
+  stageId: string;
+};
+
+/** Options de phases proposées pour un thème donné (vide si aucun thème). */
+export function resolveStageOptions(
+  themes: MissionThemeNode[],
+  themeId: string,
+): MissionStageNode[] {
+  if (!themeId || themeId === MISSION_UNCLASSIFIED) return [];
+  return themes.find((t) => t.id === themeId)?.stages ?? [];
+}
+
+/** Thème parent d'une phase, ou "" si la phase est inconnue/absente. */
+export function resolveThemeIdForStage(
+  themes: MissionThemeNode[],
+  stageId: string,
+): string {
+  if (!stageId) return "";
+  for (const theme of themes) {
+    if (theme.stages.some((s) => s.id === stageId)) return theme.id;
+  }
+  return "";
+}
+
+/**
+ * Changement de thème dans l'UI : une phase devenue incompatible est
+ * réinitialisée (jamais d'envoi d'une phase d'un autre thème).
+ */
+export function resolveStageAfterThemeChange(
+  themes: MissionThemeNode[],
+  nextThemeId: string,
+  currentStageId: string,
+): string {
+  if (!currentStageId) return "";
+  const stages = resolveStageOptions(themes, nextThemeId);
+  return stages.some((s) => s.id === currentStageId) ? currentStageId : "";
+}
+
+/** Libellé de classement d'une ligne de liste (« Non classé » si absent). */
+export function formatListClassification(item: AdminExerciseListItem): string {
+  return formatMissionClassification(
+    item.missionThemeName ?? null,
+    item.missionStageName ?? null,
+  );
+}
+
+/**
+ * Une phase archivée (ou dont le thème est archivé) reste affichée pour ne
+ * jamais masquer un exercice, mais n'est plus proposée comme cible.
+ */
+export function isStageSelectable(
+  theme: MissionThemeNode,
+  stage: MissionStageNode,
+): boolean {
+  return (
+    !isMissionArchivedReadOnly(theme.status) &&
+    !isMissionArchivedReadOnly(stage.status)
+  );
 }
 
 /** Ne pas effacer la confirmation restore après un échec API. */
