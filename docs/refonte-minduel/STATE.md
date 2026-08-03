@@ -126,12 +126,13 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 | **M** | Progression avancée (Tendances, Comparatif, Diagnostic, Badges) | **Livré** |
 | **N1** | Catalogue Missions administrable (thèmes, phases, avatars) | **Livré** (migration non exécutée) |
 | **N2** | Rendu télépro Missions + portraits définitifs | **Livré** (migration N1 toujours non exécutée) |
+| **N3** | Création guidée Skills + finition visuelle télépro | **Livré** (migration N1 toujours non exécutée) |
 | **Ultérieur** | Upload manuel + analyse d'appels réels + écart simulé/réel (coûts IA) | Hors feuille immédiate |
 | **Reporté** | Ringover (aucune connexion, synchro, env, route, ni mention « disponible ») | Reporté |
 
 **Contenu Skills :** intégralement administrable ; **aucune donnée de production Skills n'a été créée** ni seedée au moment des lots J–M. La migration Skills a été **appliquée en production** lors du déploiement V2 (voir LOT RELEASE-CLOSE) ; aucun seed / backfill Skills.
 
-**Prochain lot recommandé :** **LOT N3** — simplification de création/publication des articles Skills et derniers ajustements visuels. Migration catalogue Missions `20260803112000_mission_catalog` toujours **non exécutée**. Surveillance ops post-V2 inchangée (baseline `failed: 2`, Auto-Deploy OFF).
+**Prochain lot recommandé :** gate de release et smoke manuel. Migration catalogue Missions `20260803112000_mission_catalog` toujours **non exécutée**. Surveillance ops post-V2 inchangée (baseline `failed: 2`, Auto-Deploy OFF).
 
 ## Questions ouvertes (3)
 
@@ -689,10 +690,36 @@ Toutes les routes API sont protégées par `requirePlatformAdmin`. Enveloppes `{
 | Migration N1 | **Toujours non exécutée** |
 | Prisma schema / migrations / package / lockfile | Non modifiés |
 
-### Reporté au LOT N3
+## LOT N3 — Création guidée Skills + finition visuelle (03/08/2026)
 
-- Simplification de création/publication des articles Skills.
-- Derniers ajustements visuels.
+**Livré :**
+
+- Parcours de création Skills guidé (Catégorie → Section → Article → Contenu → Publication) sur `/admin/skills`.
+- Identité persistée de l'article (`persistedArticleId`) : premier save POST, suivants PATCH ; aucun second POST après échec de publication.
+- Premier bloc paragraphe automatique non fictif ; sanitize → `[]` pour DRAFT ; aucun texte de démonstration persisté.
+- Aperçu local « Aperçu télépro » via `SkillBlocks` (état formulaire uniquement, aucun fetch).
+- `Enregistrer le brouillon` et `Enregistrer et publier` (sauvegarde puis action publish explicite).
+- Gestion des prérequis parents (DRAFT/ARCHIVED bloquent la publication article uniquement ; parents jamais auto-publiés).
+- Absence de faux succès (`!res.ok`, panneau confirmation conservé, formulaires isolés).
+- Rendu télépro finalisé (cartes, tags, padding nav, fil d'Ariane article, `SkillBlocks` défensif).
+
+### Vérifications
+
+| Commande | Résultat |
+|---|---|
+| `npm test -- tests/adminSkillsUi.test.ts tests/skillsAdmin.test.ts tests/skillsTelepro.test.ts tests/lotN3.test.ts` | OK — **80** tests |
+| `npx tsc --noEmit` | OK |
+| `npm run lint --if-present` | OK — No ESLint warnings or errors |
+| `npx prisma validate` | OK |
+| `npm test` | OK — **482** tests / 28 fichiers |
+| `npm run build` | OK — `/admin/skills`, `/app/skills/*` générés |
+| `git diff --check` | OK |
+| Migration N1 | **Toujours non exécutée** |
+| Prisma schema / migrations / package / lockfile | Non modifiés |
+
+### Prochaine étape
+
+- Gate de release et smoke manuel.
 - Exécution contrôlée de la migration catalogue, seed, backfill, déploiement, commit.
 
 ### Confirmations

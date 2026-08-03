@@ -101,16 +101,21 @@ export function SkillsLibraryClient({
             <li key={cat.id}>
               <Link
                 href={`/app/skills/${cat.slug}`}
-                className={`block min-h-11 rounded-2xl border border-white/10 bg-gradient-to-br p-4 transition hover:border-white/20 focus-visible:ring-2 focus-visible:ring-electric-500/50 ${
+                className={`block min-h-11 rounded-2xl border border-white/10 bg-gradient-to-br p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:border-electric-500/35 focus-visible:ring-2 focus-visible:ring-electric-500/50 ${
                   CARD_ACCENTS[i % CARD_ACCENTS.length]
                 }`}
               >
                 <div className="flex items-start gap-3">
-                  <span aria-hidden className="text-2xl">
+                  <span
+                    aria-hidden
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-black/25 text-2xl"
+                  >
                     {ICON_EMOJI[cat.iconKey] ?? ICON_EMOJI.book}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="text-base font-bold text-white">{cat.name}</p>
+                    <p className="text-base font-bold tracking-tight text-white">
+                      {cat.name}
+                    </p>
                     {cat.description && (
                       <p className="mt-0.5 line-clamp-2 text-xs text-white/55">
                         {cat.description}
@@ -123,7 +128,7 @@ export function SkillsLibraryClient({
                       {cat.sectionCount > 1 ? "s" : ""}
                     </p>
                   </div>
-                  <span aria-hidden className="text-white/35">
+                  <span aria-hidden className="text-lg text-electric-400/70">
                     ›
                   </span>
                 </div>
