@@ -6,17 +6,27 @@ import {
   buildArtifactsFromEditor,
   buildMetadataPatchPayload,
   editorStateFromBundle,
+  formatListClassification,
   isArchivedReadOnly,
+  isStageSelectable,
   listItemLooksSafe,
   metaFormFromExercise,
   resolveApplySync,
   resolvePromptSaveAction,
+  resolveStageAfterThemeChange,
+  resolveStageOptions,
+  resolveThemeIdForStage,
   shouldClearConfirmOnFailure,
   shouldDismissRestoreUi,
   type AdminExerciseDetail,
   type MetaFormState,
   type PromptEditorState,
 } from "@/lib/adminExercisesUi";
+import {
+  MISSION_UNCLASSIFIED,
+  UNCLASSIFIED_LABEL,
+  type MissionThemeNode,
+} from "@/lib/missionCatalog";
 
 function read(rel: string) {
   return readFileSync(path.resolve(rel), "utf8");
@@ -391,5 +401,216 @@ describe("Admin UI — pages App Router sans exports nommés", () => {
 
   it("page détail : export default uniquement", () => {
     assertPageExportsOnlyDefault("src/app/admin/exercises/[id]/page.tsx");
+  });
+
+  it("page parcours : export default uniquement", () => {
+    assertPageExportsOnlyDefault("src/app/admin/missions/page.tsx");
+  });
+});
+
+describe("Admin UI — classement Missions et avatars (lot N1)", () => {
+  const themes: MissionThemeNode[] = [
+    {
+      id: "theme-1",
+      name: "Prise de rendez-vous",
+      slug: "prise-de-rendez-vous",
+      description: null,
+      iconKey: "target",
+      sortOrder: 0,
+      status: "PUBLISHED",
+      createdAt: "2026-08-01",
+      updatedAt: "2026-08-01",
+      stages: [
+        {
+          id: "stage-1",
+          themeId: "theme-1",
+          name: "Passer le barrage",
+          slug: "passer-le-barrage",
+          description: null,
+          levelNumber: 1,
+          sortOrder: 0,
+          status: "PUBLISHED",
+          createdAt: "2026-08-01",
+          updatedAt: "2026-08-01",
+          exerciseCount: 2,
+        },
+        {
+          id: "stage-archived",
+          themeId: "theme-1",
+          name: "Ancienne phase",
+          slug: "ancienne-phase",
+          description: null,
+          levelNumber: 2,
+          sortOrder: 1,
+          status: "ARCHIVED",
+          createdAt: "2026-08-01",
+          updatedAt: "2026-08-01",
+          exerciseCount: 0,
+        },
+      ],
+    },
+    {
+      id: "theme-2",
+      name: "Closing",
+      slug: "closing",
+      description: null,
+      iconKey: "trophy",
+      sortOrder: 1,
+      status: "ARCHIVED",
+      createdAt: "2026-08-01",
+      updatedAt: "2026-08-01",
+      stages: [
+        {
+          id: "stage-2",
+          themeId: "theme-2",
+          name: "Signer",
+          slug: "signer",
+          description: null,
+          levelNumber: 1,
+          sortOrder: 0,
+          status: "PUBLISHED",
+          createdAt: "2026-08-01",
+          updatedAt: "2026-08-01",
+          exerciseCount: 0,
+        },
+      ],
+    },
+  ];
+
+  it("les phases proposées dépendent du thème sélectionné", () => {
+    expect(resolveStageOptions(themes, "theme-1").map((s) => s.id)).toEqual([
+      "stage-1",
+      "stage-archived",
+    ]);
+    expect(resolveStageOptions(themes, "")).toEqual([]);
+    expect(resolveStageOptions(themes, MISSION_UNCLASSIFIED)).toEqual([]);
+    expect(resolveStageOptions(themes, "theme-inconnu")).toEqual([]);
+  });
+
+  it("le thème parent est déduit de la phase courante", () => {
+    expect(resolveThemeIdForStage(themes, "stage-2")).toBe("theme-2");
+    expect(resolveThemeIdForStage(themes, "")).toBe("");
+    expect(resolveThemeIdForStage(themes, "stage-fantome")).toBe("");
+  });
+
+  it("changer de thème réinitialise une phase devenue incompatible", () => {
+    expect(resolveStageAfterThemeChange(themes, "theme-1", "stage-1")).toBe(
+      "stage-1",
+    );
+    expect(resolveStageAfterThemeChange(themes, "theme-2", "stage-1")).toBe("");
+    expect(resolveStageAfterThemeChange(themes, "", "stage-1")).toBe("");
+    expect(resolveStageAfterThemeChange(themes, "theme-1", "")).toBe("");
+  });
+
+  it("une phase ou un thème archivé n'est plus proposé comme cible", () => {
+    const theme = themes[0]!;
+    expect(isStageSelectable(theme, theme.stages[0]!)).toBe(true);
+    expect(isStageSelectable(theme, theme.stages[1]!)).toBe(false);
+    expect(isStageSelectable(themes[1]!, themes[1]!.stages[0]!)).toBe(false);
+  });
+
+  it("libellé de classement : « Non classé » pour les exercices legacy", () => {
+    expect(
+      formatListClassification({
+        id: "ex-1",
+        name: "Legacy",
+        slug: "legacy",
+        status: "PUBLISHED",
+        level: "MOYEN",
+        missionLevel: 1,
+        sortOrder: 0,
+        updatedAt: "2026-08-01",
+        createdAt: "2026-08-01",
+      }),
+    ).toBe(UNCLASSIFIED_LABEL);
+
+    expect(
+      formatListClassification({
+        id: "ex-2",
+        name: "Classé",
+        slug: "classe",
+        status: "PUBLISHED",
+        level: "MOYEN",
+        missionLevel: 1,
+        sortOrder: 0,
+        updatedAt: "2026-08-01",
+        createdAt: "2026-08-01",
+        missionStageId: "stage-1",
+        missionStageName: "Passer le barrage",
+        missionThemeId: "theme-1",
+        missionThemeName: "Prise de rendez-vous",
+      }),
+    ).toContain("Prise de rendez-vous");
+  });
+
+  it("le payload metadata convertit les champs vides en null explicite", () => {
+    const meta: MetaFormState = {
+      ...metaFormFromExercise({
+        id: "ex-1",
+        name: "Demo",
+        slug: "demo",
+        status: "DRAFT",
+        level: "MOYEN",
+        missionLevel: 1,
+        sortOrder: 0,
+        callType: "VENTE",
+        campaign: null,
+        offer: null,
+        prospectProfile: null,
+        initialSituation: null,
+        objective: null,
+        personality: null,
+        allowedObjections: [],
+        secretInfos: [],
+        successConditions: null,
+        failureConditions: null,
+        targetDurationSec: 300,
+        traineeBrief: null,
+        currentBundle: null,
+        versions: [],
+        missionStageId: "stage-1",
+        prospectAvatarKey: "alex",
+      }),
+    };
+    expect(meta.missionStageId).toBe("stage-1");
+    expect(meta.prospectAvatarKey).toBe("alex");
+
+    const kept = buildMetadataPatchPayload(meta);
+    expect(kept.missionStageId).toBe("stage-1");
+    expect(kept.prospectAvatarKey).toBe("alex");
+
+    meta.missionStageId = "";
+    meta.prospectAvatarKey = "";
+    const cleared = buildMetadataPatchPayload(meta);
+    expect(cleared.missionStageId).toBeNull();
+    expect(cleared.prospectAvatarKey).toBeNull();
+    // La mise à jour des métadonnées ne touche jamais aux prompts.
+    for (const key of LIST_SENSITIVE_KEYS) {
+      expect(cleared).not.toHaveProperty(key);
+    }
+  });
+
+  it("les pages exercices traitent chaque réponse API en échec", () => {
+    for (const rel of [
+      "src/app/admin/exercises/page.tsx",
+      "src/app/admin/exercises/[id]/page.tsx",
+      "src/app/admin/missions/page.tsx",
+    ]) {
+      const src = read(rel);
+      const fetches = (src.match(/await fetch\(/g) ?? []).length;
+      const guards = (src.match(/!res\.ok/g) ?? []).length;
+      expect(fetches).toBeGreaterThan(0);
+      expect(guards).toBe(fetches);
+      expect(src).not.toContain("dangerouslySetInnerHTML");
+    }
+  });
+
+  it("la liste affiche l'avatar sans exposer de prompt", () => {
+    const src = read("src/app/admin/exercises/page.tsx");
+    expect(src).toContain("ProspectAvatar");
+    expect(src).toContain("MISSION_UNCLASSIFIED");
+    for (const key of LIST_SENSITIVE_KEYS) {
+      expect(src).not.toContain(`item.${key}`);
+    }
   });
 });

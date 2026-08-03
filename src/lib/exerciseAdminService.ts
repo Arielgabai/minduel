@@ -14,6 +14,11 @@ import {
   hashPromptArtifacts,
   type PromptArtifact,
 } from "./promptArtifacts";
+import {
+  MISSION_UNCLASSIFIED,
+  MissionStatus,
+  ProspectAvatarKeySchema,
+} from "./missionCatalog";
 import { nowIso, parseJson, stringifyJson } from "./utils";
 
 export { hashPromptArtifacts } from "./promptArtifacts";
@@ -77,6 +82,10 @@ export const ExerciseMetadataSchema = z.object({
   failureConditions: z.string().max(1000).optional(),
   targetDurationSec: z.number().int().min(60).max(1800).default(300),
   traineeBrief: z.string().max(4000).optional(),
+  // Catalogue Missions (lot N1) : null retire explicitement le classement /
+  // l'avatar ; undefined laisse la valeur existante inchangée.
+  missionStageId: z.string().min(1).max(64).nullish(),
+  prospectAvatarKey: ProspectAvatarKeySchema.nullish(),
 });
 
 export type ExerciseMetadataInput = z.infer<typeof ExerciseMetadataSchema>;
@@ -87,6 +96,9 @@ const ListFiltersSchema = z.object({
     .optional(),
   missionLevel: z.coerce.number().int().min(1).max(20).optional(),
   q: z.string().max(120).optional(),
+  // Catalogue Missions : identifiant, ou MISSION_UNCLASSIFIED pour « Non classé ».
+  missionThemeId: z.string().min(1).max(64).optional(),
+  missionStageId: z.string().min(1).max(64).optional(),
 });
 
 /** Fixtures locales pour prévisualiser l'interpolation (aucun réseau). */
@@ -237,11 +249,48 @@ async function loadExerciseOrThrow(id: string, organizationId: string) {
       promptBundles: { orderBy: { version: "desc" } },
       publishedPromptBundle: true,
       rubric: true,
+      missionStage: {
+        select: {
+          id: true,
+          themeId: true,
+          name: true,
+          status: true,
+          theme: { select: { id: true, name: true, status: true } },
+        },
+      },
       _count: { select: { simulations: true, assignments: true } },
     },
   });
   if (!scenario) throw new HttpError(404, "Exercice introuvable.");
   return scenario;
+}
+
+/**
+ * Vérifie qu'une phase est affectable à un exercice de cette organisation.
+ * Hors organisation → 404 (aucune fuite d'existence) ; phase ou thème archivé
+ * → 409. La contrainte SQL composite (missionStageId, organizationId) est la
+ * seconde ligne de défense si cette garde était contournée.
+ */
+async function resolveAssignableStageId(
+  stageId: string,
+  organizationId: string,
+): Promise<string> {
+  const stage = await prisma.missionStage.findFirst({
+    where: { id: stageId, organizationId },
+    select: {
+      id: true,
+      status: true,
+      theme: { select: { status: true } },
+    },
+  });
+  if (!stage) throw new HttpError(404, "Phase de mission introuvable.");
+  if (stage.status === MissionStatus.ARCHIVED) {
+    throw new HttpError(409, "Phase archivée : classement impossible.");
+  }
+  if (stage.theme?.status === MissionStatus.ARCHIVED) {
+    throw new HttpError(409, "Thème archivé : classement impossible.");
+  }
+  return stage.id;
 }
 
 function bundleSummary(b: {
@@ -268,6 +317,15 @@ function bundleSummary(b: {
   };
 }
 
+/** Phase jointe : uniquement des libellés de classement, jamais de contenu. */
+type ListItemStage = {
+  id: string;
+  themeId: string;
+  name: string;
+  status: string;
+  theme?: { id: string; name: string; status: string } | null;
+} | null;
+
 function listItem(s: {
   id: string;
   name: string;
@@ -279,7 +337,11 @@ function listItem(s: {
   publishedPromptBundleId: string | null;
   updatedAt: string;
   createdAt: string;
+  missionStageId?: string | null;
+  prospectAvatarKey?: string | null;
+  missionStage?: ListItemStage;
 }) {
+  const stage = s.missionStage ?? null;
   return {
     id: s.id,
     name: s.name,
@@ -291,6 +353,12 @@ function listItem(s: {
     publishedPromptBundleId: s.publishedPromptBundleId,
     updatedAt: s.updatedAt,
     createdAt: s.createdAt,
+    // Classement Missions : null = « Non classé » (exercice legacy conservé).
+    missionStageId: s.missionStageId ?? null,
+    missionStageName: stage?.name ?? null,
+    missionThemeId: stage?.themeId ?? null,
+    missionThemeName: stage?.theme?.name ?? null,
+    prospectAvatarKey: s.prospectAvatarKey ?? null,
   };
 }
 
@@ -303,6 +371,8 @@ export async function listExercises(
     organizationId: string;
     status?: string;
     missionLevel?: number;
+    missionStageId?: string | null;
+    missionStage?: { themeId: string };
     OR?: Array<{
       name?: { contains: string; mode: "insensitive" };
       slug?: { contains: string; mode: "insensitive" };
@@ -310,6 +380,17 @@ export async function listExercises(
   } = { organizationId };
   if (filters.status) where.status = filters.status;
   if (filters.missionLevel != null) where.missionLevel = filters.missionLevel;
+  // « Non classé » l'emporte sur un filtre de thème : les deux sont exclusifs.
+  if (
+    filters.missionStageId === MISSION_UNCLASSIFIED ||
+    filters.missionThemeId === MISSION_UNCLASSIFIED
+  ) {
+    where.missionStageId = null;
+  } else if (filters.missionStageId) {
+    where.missionStageId = filters.missionStageId;
+  } else if (filters.missionThemeId) {
+    where.missionStage = { themeId: filters.missionThemeId };
+  }
   if (filters.q) {
     where.OR = [
       { name: { contains: filters.q, mode: "insensitive" } },
@@ -334,6 +415,17 @@ export async function listExercises(
       publishedPromptBundleId: true,
       updatedAt: true,
       createdAt: true,
+      missionStageId: true,
+      prospectAvatarKey: true,
+      missionStage: {
+        select: {
+          id: true,
+          themeId: true,
+          name: true,
+          status: true,
+          theme: { select: { id: true, name: true, status: true } },
+        },
+      },
     },
   });
   return rows.map(listItem);
@@ -392,6 +484,9 @@ export async function createExerciseDraft(
   const slug = body.slug ?? slugifyName(body.name);
   if (!slug) throw new HttpError(422, "Slug invalide.");
   await assertUniqueSlug(organizationId, slug);
+  const missionStageId = body.missionStageId
+    ? await resolveAssignableStageId(body.missionStageId, organizationId)
+    : null;
 
   const now = nowIso();
   const { scenario, bundle } = await prisma.$transaction(async (tx) => {
@@ -417,6 +512,8 @@ export async function createExerciseDraft(
         failureConditions: body.failureConditions ?? null,
         targetDurationSec: body.targetDurationSec,
         traineeBrief: body.traineeBrief ?? null,
+        missionStageId,
+        prospectAvatarKey: body.prospectAvatarKey ?? null,
         status: ScenarioStatus.DRAFT,
         createdAt: now,
         updatedAt: now,
@@ -477,6 +574,18 @@ export async function updateExerciseMetadata(
     throw new HttpError(409, "Exercice archivé : métadonnées non modifiables.");
   }
 
+  // Classement Missions : undefined = inchangé, null = « Non classé ».
+  let missionStageId = existing.missionStageId;
+  if (body.missionStageId !== undefined) {
+    missionStageId = body.missionStageId
+      ? await resolveAssignableStageId(body.missionStageId, organizationId)
+      : null;
+  }
+  let prospectAvatarKey = existing.prospectAvatarKey;
+  if (body.prospectAvatarKey !== undefined) {
+    prospectAvatarKey = body.prospectAvatarKey ?? null;
+  }
+
   let slug = existing.slug;
   if (body.slug !== undefined) {
     await assertUniqueSlug(organizationId, body.slug, id);
@@ -530,6 +639,9 @@ export async function updateExerciseMetadata(
         body.traineeBrief !== undefined
           ? body.traineeBrief
           : existing.traineeBrief,
+      // Le bundle de prompts n'est jamais touché par cette mise à jour.
+      missionStageId,
+      prospectAvatarKey,
       updatedAt: nowIso(),
     },
   });

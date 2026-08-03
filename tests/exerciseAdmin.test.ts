@@ -56,6 +56,19 @@ type ScenarioRow = {
   status: string;
   createdAt: string;
   updatedAt: string;
+  missionStageId: string | null;
+  prospectAvatarKey: string | null;
+};
+
+// Catalogue Missions (lot N1) : fixtures locales, jamais de base réelle.
+type StageRow = {
+  id: string;
+  organizationId: string;
+  themeId: string;
+  name: string;
+  status: string;
+  themeName: string;
+  themeStatus: string;
 };
 
 type RubricRow = {
@@ -69,6 +82,7 @@ type RubricRow = {
 };
 
 let scenarios: ScenarioRow[] = [];
+let missionStages: StageRow[] = [];
 let bundles: BundleRow[] = [];
 let rubrics: RubricRow[] = [];
 let simulations: Array<{ id: string; scenarioId: string }> = [];
@@ -102,20 +116,49 @@ function matchScenario(where: Record<string, unknown> | undefined): ScenarioRow 
   );
 }
 
+/** Relation `missionStage` telle que la projette Prisma pour la liste admin. */
+function stageRelation(missionStageId: string | null) {
+  const stage = missionStages.find((s) => s.id === missionStageId);
+  if (!stage) return null;
+  return {
+    id: stage.id,
+    themeId: stage.themeId,
+    name: stage.name,
+    theme: { id: stage.themeId, name: stage.themeName },
+  };
+}
+
 vi.mock("@/lib/db", () => {
   const scenarioApi = {
     findMany: async ({ where }: { where?: Record<string, unknown> }) =>
-      scenarios.filter((s) => {
-        if (where?.organizationId && s.organizationId !== where.organizationId)
-          return false;
-        if (where?.status && s.status !== where.status) return false;
-        if (
-          where?.missionLevel != null &&
-          s.missionLevel !== where.missionLevel
-        )
-          return false;
-        return true;
-      }),
+      scenarios
+        .filter((s) => {
+          if (
+            where?.organizationId &&
+            s.organizationId !== where.organizationId
+          )
+            return false;
+          if (where?.status && s.status !== where.status) return false;
+          if (
+            where?.missionLevel != null &&
+            s.missionLevel !== where.missionLevel
+          )
+            return false;
+          if ("missionStageId" in (where ?? {})) {
+            const expected = (where as { missionStageId: string | null })
+              .missionStageId;
+            if (expected === null && s.missionStageId !== null) return false;
+            if (expected !== null && s.missionStageId !== expected) return false;
+          }
+          const themeFilter = (where as { missionStage?: { themeId: string } })
+            ?.missionStage?.themeId;
+          if (themeFilter) {
+            const stage = missionStages.find((x) => x.id === s.missionStageId);
+            if (!stage || stage.themeId !== themeFilter) return false;
+          }
+          return true;
+        })
+        .map((s) => ({ ...s, missionStage: stageRelation(s.missionStageId) })),
     findFirst: async ({
       where,
       include,
@@ -138,6 +181,7 @@ vi.mock("@/lib/db", () => {
         promptBundles,
         publishedPromptBundle,
         rubric,
+        missionStage: stageRelation(found.missionStageId),
         _count: {
           simulations: simulations.filter((x) => x.scenarioId === found.id)
             .length,
@@ -179,6 +223,8 @@ vi.mock("@/lib/db", () => {
         status: data.status ?? "DRAFT",
         createdAt: data.createdAt!,
         updatedAt: data.updatedAt!,
+        missionStageId: data.missionStageId ?? null,
+        prospectAvatarKey: data.prospectAvatarKey ?? null,
       };
       scenarios.push(row);
       return row;
@@ -288,9 +334,30 @@ vi.mock("@/lib/db", () => {
     },
   };
 
+  const missionStageApi = {
+    findFirst: async ({
+      where,
+    }: {
+      where?: { id?: string; organizationId?: string };
+    }) => {
+      const stage = missionStages.find(
+        (s) =>
+          (!where?.id || s.id === where.id) &&
+          (!where?.organizationId || s.organizationId === where.organizationId),
+      );
+      if (!stage) return null;
+      return {
+        id: stage.id,
+        status: stage.status,
+        theme: { status: stage.themeStatus },
+      };
+    },
+  };
+
   return {
     prisma: {
       scenario: scenarioApi,
+      missionStage: missionStageApi,
       promptBundle: promptBundleApi,
       evaluationRubric: evaluationRubricApi,
       $transaction: async (
@@ -317,6 +384,7 @@ vi.mock("@/lib/audit", () => ({
 
 beforeEach(() => {
   scenarios = [];
+  missionStages = [];
   bundles = [];
   rubrics = [];
   simulations = [];
@@ -670,6 +738,8 @@ describe("cycle de vie exercice / versions", () => {
       status: ScenarioStatus.PUBLISHED,
       createdAt: now,
       updatedAt: now,
+      missionStageId: null,
+      prospectAvatarKey: null,
     });
     rubrics.push({
       id: "rub-1",
@@ -718,6 +788,222 @@ describe("cycle de vie exercice / versions", () => {
     const copiedBundle = bundles.find((b) => b.scenarioId === dup.id);
     expect(copiedBundle?.version).toBe(1);
     expect(copiedBundle?.status).toBe(PromptBundleStatus.DRAFT);
+  });
+});
+
+describe("classement Missions et avatar de prospect (lot N1)", () => {
+  async function seedExercise(overrides: Partial<ScenarioRow> = {}) {
+    const now = nowIsoLike();
+    const row: ScenarioRow = {
+      id: "ex-1",
+      organizationId: "org1",
+      authorId: "admin1",
+      name: "Découverte",
+      slug: "decouverte",
+      missionLevel: 2,
+      sortOrder: 3,
+      publishedPromptBundleId: null,
+      callType: "VENTE",
+      campaign: null,
+      offer: null,
+      prospectProfile: null,
+      initialSituation: null,
+      objective: null,
+      level: "MOYEN",
+      personality: null,
+      allowedObjections: null,
+      secretInfos: null,
+      successConditions: null,
+      failureConditions: null,
+      targetDurationSec: 300,
+      traineeBrief: null,
+      knowledgeRefs: null,
+      aiProspect: null,
+      relationshipHistory: null,
+      expectedNextSteps: null,
+      targetSkills: null,
+      coachingReference: null,
+      status: ScenarioStatus.DRAFT,
+      createdAt: now,
+      updatedAt: now,
+      missionStageId: null,
+      prospectAvatarKey: null,
+      ...overrides,
+    };
+    scenarios.push(row);
+    return row;
+  }
+
+  function nowIsoLike() {
+    return "2026-08-03T09:00:00.000Z";
+  }
+
+  function seedStage(overrides: Partial<StageRow> = {}) {
+    const stage: StageRow = {
+      id: "stage-1",
+      organizationId: "org1",
+      themeId: "theme-1",
+      name: "Passer le barrage",
+      status: "PUBLISHED",
+      themeName: "Prise de rendez-vous",
+      themeStatus: "PUBLISHED",
+      ...overrides,
+    };
+    missionStages.push(stage);
+    return stage;
+  }
+
+  it("classe un exercice dans une phase de la même organisation", async () => {
+    const svc = await import("@/lib/exerciseAdminService");
+    const ex = await seedExercise();
+    const stage = seedStage();
+    const updated = await svc.updateExerciseMetadata(ex.id, "org1", "admin1", {
+      missionStageId: stage.id,
+      prospectAvatarKey: "sarah",
+    });
+    expect(updated.missionStageId).toBe(stage.id);
+    expect(scenarios[0]!.missionStageId).toBe(stage.id);
+    expect(scenarios[0]!.prospectAvatarKey).toBe("sarah");
+    // Les champs legacy et le bundle publié restent intacts.
+    expect(scenarios[0]!.missionLevel).toBe(2);
+    expect(scenarios[0]!.sortOrder).toBe(3);
+    expect(scenarios[0]!.publishedPromptBundleId).toBeNull();
+  });
+
+  it("refuse une phase d'une autre organisation (404)", async () => {
+    const svc = await import("@/lib/exerciseAdminService");
+    const ex = await seedExercise();
+    seedStage({ id: "stage-foreign", organizationId: "org2" });
+    await expect(
+      svc.updateExerciseMetadata(ex.id, "org1", "admin1", {
+        missionStageId: "stage-foreign",
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(scenarios[0]!.missionStageId).toBeNull();
+  });
+
+  it("refuse une phase ou un thème archivé (409)", async () => {
+    const svc = await import("@/lib/exerciseAdminService");
+    const ex = await seedExercise();
+    seedStage({ id: "stage-archived", status: "ARCHIVED" });
+    seedStage({
+      id: "stage-theme-archived",
+      themeId: "theme-2",
+      themeStatus: "ARCHIVED",
+    });
+    await expect(
+      svc.updateExerciseMetadata(ex.id, "org1", "admin1", {
+        missionStageId: "stage-archived",
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      svc.updateExerciseMetadata(ex.id, "org1", "admin1", {
+        missionStageId: "stage-theme-archived",
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("retire le classement et l'avatar avec null", async () => {
+    const svc = await import("@/lib/exerciseAdminService");
+    const stage = seedStage();
+    const ex = await seedExercise({
+      missionStageId: stage.id,
+      prospectAvatarKey: "alex",
+    });
+    await svc.updateExerciseMetadata(ex.id, "org1", "admin1", {
+      missionStageId: null,
+      prospectAvatarKey: null,
+    });
+    expect(scenarios[0]!.missionStageId).toBeNull();
+    expect(scenarios[0]!.prospectAvatarKey).toBeNull();
+  });
+
+  it("refuse un avatar hors catalogue", async () => {
+    const svc = await import("@/lib/exerciseAdminService");
+    const ex = await seedExercise();
+    await expect(
+      svc.updateExerciseMetadata(ex.id, "org1", "admin1", {
+        prospectAvatarKey: "avatar-inconnu",
+      }),
+    ).rejects.toThrow();
+    expect(scenarios[0]!.prospectAvatarKey).toBeNull();
+  });
+
+  it("exercice archivé : classement refusé", async () => {
+    const svc = await import("@/lib/exerciseAdminService");
+    const stage = seedStage();
+    const ex = await seedExercise({ status: ScenarioStatus.ARCHIVED });
+    await expect(
+      svc.updateExerciseMetadata(ex.id, "org1", "admin1", {
+        missionStageId: stage.id,
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("liste : filtres thème / phase / non classé, sans donnée sensible", async () => {
+    const svc = await import("@/lib/exerciseAdminService");
+    const stage = seedStage();
+    await seedExercise({ id: "ex-classe", missionStageId: stage.id });
+    await seedExercise({ id: "ex-legacy", slug: "legacy" });
+
+    const all = await svc.listExercises("org1", {});
+    expect(all).toHaveLength(2);
+
+    const classified = all.find((i) => i.id === "ex-classe")!;
+    expect(classified.missionThemeName).toBe("Prise de rendez-vous");
+    expect(classified.missionStageName).toBe("Passer le barrage");
+
+    const legacy = all.find((i) => i.id === "ex-legacy")!;
+    expect(legacy.missionStageId).toBeNull();
+    expect(legacy.missionThemeName).toBeNull();
+
+    const byTheme = await svc.listExercises("org1", {
+      missionThemeId: "theme-1",
+    });
+    expect(byTheme.map((i) => i.id)).toEqual(["ex-classe"]);
+
+    const byStage = await svc.listExercises("org1", {
+      missionStageId: stage.id,
+    });
+    expect(byStage.map((i) => i.id)).toEqual(["ex-classe"]);
+
+    const unclassified = await svc.listExercises("org1", {
+      missionStageId: "none",
+    });
+    expect(unclassified.map((i) => i.id)).toEqual(["ex-legacy"]);
+
+    const serialized = JSON.stringify(all);
+    for (const forbidden of [
+      "artifacts",
+      "contentHash",
+      "PROSPECT_PERSONA",
+      "secretInfos",
+      "personality",
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
+  it("création : classement et avatar validés dès le brouillon", async () => {
+    const svc = await import("@/lib/exerciseAdminService");
+    const stage = seedStage();
+    const created = await svc.createExerciseDraft("org1", "admin1", {
+      name: "Barrage secrétaire",
+      level: "MOYEN",
+      missionStageId: stage.id,
+      prospectAvatarKey: "lena",
+    });
+    const row = scenarios.find((s) => s.id === created.id)!;
+    expect(row.missionStageId).toBe(stage.id);
+    expect(row.prospectAvatarKey).toBe("lena");
+
+    await expect(
+      svc.createExerciseDraft("org1", "admin1", {
+        name: "Avatar invalide",
+        level: "MOYEN",
+        prospectAvatarKey: "inexistant",
+      }),
+    ).rejects.toThrow();
   });
 });
 

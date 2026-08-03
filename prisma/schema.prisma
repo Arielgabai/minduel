@@ -46,6 +46,9 @@ model Organization {
   skillArticles        SkillArticle[]
   skillArticleMappings SkillArticleMapping[]
 
+  missionThemes MissionTheme[]
+  missionStages MissionStage[]
+
   @@index([slug])
 }
 
@@ -129,6 +132,10 @@ model Scenario {
   slug                    String?
   missionLevel            Int     @default(1)
   sortOrder               Int     @default(0)
+  // Catalogue Missions (lot N1) : classement optionnel et avatar de prospect.
+  // Additifs et nullables : les exercices existants restent « Non classé ».
+  missionStageId          String?
+  prospectAvatarKey       String?
   publishedPromptBundleId String? @unique
   campaign                String?
   callType                String  @default("VENTE") // VENTE | PITCH_INVESTISSEUR | ENTRETIEN_EMBAUCHE
@@ -171,11 +178,17 @@ model Scenario {
   rubric                EvaluationRubric?
   assignments           ScenarioAssignment[]
   simulations           Simulation[]
+  // FK composite : scenario.organizationId === missionStage.organizationId.
+  // Restrict (jamais Cascade / SetNull) : supprimer une phase ne doit jamais
+  // supprimer ni déclasser silencieusement un exercice. Le déclassement passe
+  // par l'API admin (missionStageId = null) avant toute suppression de phase.
+  missionStage          MissionStage?        @relation(fields: [missionStageId, organizationId], references: [id, organizationId], onDelete: Restrict)
 
   @@unique([organizationId, slug])
   @@index([organizationId])
   @@index([status])
   @@index([organizationId, missionLevel, sortOrder])
+  @@index([organizationId, missionStageId])
 }
 
 // Bundle de prompts versionné par exercice (scénario).
@@ -573,6 +586,68 @@ model SkillArticleMapping {
 
   @@unique([articleId, skillKey])
   @@index([organizationId, skillKey])
+}
+
+// ---------------------------------------------------------------------------
+// Catalogue Missions (lot N1) : Thème → phase/niveau → exercices.
+// Statuts applicatifs : DRAFT | PUBLISHED | ARCHIVED (voir src/lib/missionCatalog.ts).
+// Aucun contenu de démonstration n'est créé : le catalogue est intégralement
+// administrable par PLATFORM_ADMIN. Les exercices non classés restent visibles.
+// ---------------------------------------------------------------------------
+
+model MissionTheme {
+  id             String  @id @default(uuid())
+  organizationId String
+  name           String
+  slug           String
+  description    String?
+  // Clé d'icône contrôlée (liste fermée applicative, jamais de SVG arbitraire)
+  iconKey        String  @default("target")
+  sortOrder      Int     @default(0)
+  status         String  @default("DRAFT") // DRAFT | PUBLISHED | ARCHIVED
+  createdById    String?
+  createdAt      String
+  updatedAt      String
+  publishedAt    String?
+  archivedAt     String?
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  stages       MissionStage[]
+
+  @@unique([organizationId, slug])
+  // Ancre FK composite : empêche une phase d'une autre organisation
+  @@unique([id, organizationId])
+  @@index([organizationId, status, sortOrder])
+}
+
+model MissionStage {
+  id             String  @id @default(uuid())
+  organizationId String
+  themeId        String
+  name           String
+  slug           String
+  description    String?
+  levelNumber    Int     @default(1)
+  sortOrder      Int     @default(0)
+  status         String  @default("DRAFT") // DRAFT | PUBLISHED | ARCHIVED
+  createdById    String?
+  createdAt      String
+  updatedAt      String
+  publishedAt    String?
+  archivedAt     String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // FK composite : stage.organizationId === theme.organizationId
+  theme        MissionTheme @relation(fields: [themeId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  scenarios    Scenario[]
+
+  @@unique([themeId, slug])
+  // Un numéro de niveau unique par thème : l'ordre pédagogique reste lisible.
+  @@unique([themeId, levelNumber])
+  // Ancre FK composite : empêche un exercice d'une autre organisation
+  @@unique([id, organizationId])
+  @@index([organizationId])
+  @@index([themeId, status, sortOrder])
 }
 
 model AuditEvent {

@@ -4,7 +4,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card } from "@/components/ui";
-import type { AdminExerciseListItem } from "@/lib/adminExercisesUi";
+import { ProspectAvatar } from "@/components/ProspectAvatar";
+import {
+  formatListClassification,
+  resolveStageOptions,
+  resolveStageAfterThemeChange,
+  type AdminExerciseListItem,
+} from "@/lib/adminExercisesUi";
+import {
+  MISSION_UNCLASSIFIED,
+  UNCLASSIFIED_LABEL,
+  type MissionThemeNode,
+} from "@/lib/missionCatalog";
 
 async function readError(res: Response): Promise<string> {
   const json = await res.json().catch(() => null);
@@ -29,6 +40,9 @@ export default function AdminExercisesPage() {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [missionLevel, setMissionLevel] = useState("");
+  const [themes, setThemes] = useState<MissionThemeNode[]>([]);
+  const [missionThemeId, setMissionThemeId] = useState("");
+  const [missionStageId, setMissionStageId] = useState("");
   const [creating, setCreating] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [createName, setCreateName] = useState("");
@@ -42,6 +56,8 @@ export default function AdminExercisesPage() {
       if (q.trim()) params.set("q", q.trim());
       if (status) params.set("status", status);
       if (missionLevel) params.set("missionLevel", missionLevel);
+      if (missionThemeId) params.set("missionThemeId", missionThemeId);
+      if (missionStageId) params.set("missionStageId", missionStageId);
       const qs = params.toString();
       const res = await fetch(
         `/api/admin/exercises${qs ? `?${qs}` : ""}`,
@@ -61,11 +77,34 @@ export default function AdminExercisesPage() {
     } finally {
       setLoading(false);
     }
-  }, [q, status, missionLevel]);
+  }, [q, status, missionLevel, missionThemeId, missionStageId]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Catalogue Missions : sert uniquement à alimenter les filtres.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/admin/mission-catalog", {
+          method: "GET",
+        });
+        if (!res.ok) return;
+        const json = await res.json().catch(() => null);
+        const list = (json?.data?.themes ?? []) as MissionThemeNode[];
+        if (!cancelled && Array.isArray(list)) setThemes(list);
+      } catch {
+        // Les filtres Missions restent vides : la liste demeure utilisable.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const stageOptions = resolveStageOptions(themes, missionThemeId);
 
   const countLabel = useMemo(
     () => `${items.length} exercice${items.length === 1 ? "" : "s"}`,
@@ -122,7 +161,7 @@ export default function AdminExercisesPage() {
       </div>
 
       <Card className="border border-[#1e222c] bg-[#0d1017]">
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
           <label className="block text-xs text-[#9AA1B2]">
             Recherche
             <input
@@ -158,6 +197,52 @@ export default function AdminExercisesPage() {
               placeholder="1–20"
             />
           </label>
+          <label className="block text-xs text-[#9AA1B2]">
+            Thème
+            <select
+              value={missionThemeId}
+              onChange={(e) => {
+                const next = e.target.value;
+                setMissionThemeId(next);
+                setMissionStageId(
+                  next === MISSION_UNCLASSIFIED
+                    ? ""
+                    : resolveStageAfterThemeChange(
+                        themes,
+                        next,
+                        missionStageId,
+                      ),
+                );
+              }}
+              className="mt-1 w-full rounded-xl border border-[#1e222c] bg-[#12151d] px-3 py-2 text-sm text-white"
+            >
+              <option value="">Tous</option>
+              <option value={MISSION_UNCLASSIFIED}>{UNCLASSIFIED_LABEL}</option>
+              {themes.map((theme) => (
+                <option key={theme.id} value={theme.id}>
+                  {theme.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-xs text-[#9AA1B2]">
+            Phase
+            <select
+              value={missionStageId}
+              disabled={
+                !missionThemeId || missionThemeId === MISSION_UNCLASSIFIED
+              }
+              onChange={(e) => setMissionStageId(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-[#1e222c] bg-[#12151d] px-3 py-2 text-sm text-white disabled:opacity-50"
+            >
+              <option value="">Toutes</option>
+              {stageOptions.map((stage) => (
+                <option key={stage.id} value={stage.id}>
+                  N{stage.levelNumber} — {stage.name}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
       </Card>
 
@@ -183,6 +268,9 @@ export default function AdminExercisesPage() {
                 <th className="px-4 py-3">Statut</th>
                 <th className="px-4 py-3">Niveau</th>
                 <th className="px-4 py-3">Mission</th>
+                <th className="px-4 py-3">Thème</th>
+                <th className="px-4 py-3">Phase</th>
+                <th className="px-4 py-3">Avatar</th>
                 <th className="px-4 py-3">Ordre</th>
                 <th className="px-4 py-3">Maj</th>
               </tr>
@@ -209,6 +297,24 @@ export default function AdminExercisesPage() {
                   </td>
                   <td className="px-4 py-3">{item.level}</td>
                   <td className="px-4 py-3">{item.missionLevel}</td>
+                  <td className="px-4 py-3 text-[#9AA1B2]">
+                    {item.missionThemeName ?? UNCLASSIFIED_LABEL}
+                  </td>
+                  <td className="px-4 py-3 text-[#9AA1B2]">
+                    {item.missionStageName ?? "—"}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="flex items-center gap-2">
+                      <ProspectAvatar
+                        avatarKey={item.prospectAvatarKey}
+                        fallbackText={item.name}
+                        size={28}
+                      />
+                      <span className="sr-only">
+                        {formatListClassification(item)}
+                      </span>
+                    </span>
+                  </td>
                   <td className="px-4 py-3">{item.sortOrder}</td>
                   <td className="px-4 py-3 text-[#9AA1B2]">
                     {item.updatedAt?.slice(0, 10) ?? "—"}

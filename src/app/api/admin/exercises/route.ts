@@ -13,6 +13,8 @@ export async function GET(req: Request) {
       status: url.searchParams.get("status") ?? undefined,
       missionLevel: url.searchParams.get("missionLevel") ?? undefined,
       q: url.searchParams.get("q") ?? undefined,
+      missionThemeId: url.searchParams.get("missionThemeId") ?? undefined,
+      missionStageId: url.searchParams.get("missionStageId") ?? undefined,
     };
     const items = await listExercises(admin.organizationId, filters);
     return ok({ items });

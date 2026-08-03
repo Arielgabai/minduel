@@ -16,9 +16,19 @@ import {
   shouldDismissRestoreUi,
   type AdminExerciseDetail,
   type ApplyExerciseSync,
+  resolveStageAfterThemeChange,
+  resolveStageOptions,
+  resolveThemeIdForStage,
+  isStageSelectable,
   type MetaFormState,
   type PromptEditorState,
 } from "@/lib/adminExercisesUi";
+import { ProspectAvatar } from "@/components/ProspectAvatar";
+import { PROSPECT_AVATARS } from "@/lib/prospectAvatars";
+import {
+  UNCLASSIFIED_LABEL,
+  type MissionThemeNode,
+} from "@/lib/missionCatalog";
 
 async function readError(res: Response): Promise<string> {
   const json = await res.json().catch(() => null);
@@ -80,7 +90,11 @@ export default function AdminExerciseDetailPage() {
     failureConditions: "",
     targetDurationSec: 300,
     traineeBrief: "",
+    missionStageId: "",
+    prospectAvatarKey: "",
   });
+  const [themes, setThemes] = useState<MissionThemeNode[]>([]);
+  const [missionThemeId, setMissionThemeId] = useState("");
   const [editor, setEditor] = useState<PromptEditorState>(
     editorStateFromBundle(null),
   );
@@ -93,11 +107,43 @@ export default function AdminExerciseDetailPage() {
     (ex: AdminExerciseDetail, sync: ApplyExerciseSync = {}) => {
       const { syncMeta = false, syncEditor = false } = sync;
       setExercise(ex);
-      if (syncMeta) setMeta(metaFormFromExercise(ex));
+      if (syncMeta) {
+        setMeta(metaFormFromExercise(ex));
+        setMissionThemeId(ex.missionThemeId ?? "");
+      }
       if (syncEditor) setEditor(editorStateFromBundle(ex.currentBundle));
     },
     [],
   );
+
+  // Catalogue Missions : alimente les sélecteurs thème / phase de l'éditeur.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/admin/mission-catalog", {
+          method: "GET",
+        });
+        if (!res.ok) return;
+        const json = await res.json().catch(() => null);
+        const list = (json?.data?.themes ?? []) as MissionThemeNode[];
+        if (!cancelled && Array.isArray(list)) setThemes(list);
+      } catch {
+        // Sans catalogue, l'exercice reste modifiable et « Non classé ».
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Le thème parent est déduit de la phase enregistrée dès que l'arbre arrive.
+  useEffect(() => {
+    if (!missionThemeId && meta.missionStageId) {
+      const owner = resolveThemeIdForStage(themes, meta.missionStageId);
+      if (owner) setMissionThemeId(owner);
+    }
+  }, [themes, meta.missionStageId, missionThemeId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -499,6 +545,106 @@ export default function AdminExerciseDetailPage() {
             Durée cible (s)
             <input type="number" min={60} max={1800} className={fieldCls} disabled={archived || busy} value={meta.targetDurationSec} onChange={(e) => setMeta({ ...meta, targetDurationSec: Number(e.target.value) })} />
           </label>
+          <label className={labelCls}>
+            Thème
+            <select
+              className={fieldCls}
+              disabled={archived || busy}
+              value={missionThemeId}
+              onChange={(e) => {
+                const next = e.target.value;
+                setMissionThemeId(next);
+                // Une phase devenue incompatible est réinitialisée.
+                setMeta({
+                  ...meta,
+                  missionStageId: resolveStageAfterThemeChange(
+                    themes,
+                    next,
+                    meta.missionStageId,
+                  ),
+                });
+              }}
+            >
+              <option value="">{UNCLASSIFIED_LABEL}</option>
+              {themes.map((theme) => (
+                <option key={theme.id} value={theme.id}>
+                  {theme.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={labelCls}>
+            Phase
+            <select
+              className={fieldCls}
+              disabled={archived || busy || !missionThemeId}
+              value={meta.missionStageId}
+              onChange={(e) =>
+                setMeta({ ...meta, missionStageId: e.target.value })
+              }
+            >
+              <option value="">{UNCLASSIFIED_LABEL}</option>
+              {resolveStageOptions(themes, missionThemeId).map((stage) => {
+                const theme = themes.find((t) => t.id === missionThemeId);
+                const selectable = theme
+                  ? isStageSelectable(theme, stage)
+                  : false;
+                return (
+                  <option
+                    key={stage.id}
+                    value={stage.id}
+                    disabled={!selectable && stage.id !== meta.missionStageId}
+                  >
+                    N{stage.levelNumber} — {stage.name}
+                  </option>
+                );
+              })}
+            </select>
+          </label>
+        </div>
+        <div className="space-y-2">
+          <p className={labelCls}>Avatar du prospect</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={archived || busy}
+              onClick={() => setMeta({ ...meta, prospectAvatarKey: "" })}
+              className={`min-h-11 rounded-xl border px-3 py-2 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#3E6BFF] disabled:opacity-50 ${
+                meta.prospectAvatarKey === ""
+                  ? "border-[#3E6BFF] bg-[#3E6BFF]/10 text-white"
+                  : "border-[#1e222c] text-[#9AA1B2]"
+              }`}
+            >
+              Aucun
+            </button>
+            {PROSPECT_AVATARS.map((avatar) => (
+              <button
+                key={avatar.key}
+                type="button"
+                disabled={archived || busy}
+                onClick={() =>
+                  setMeta({ ...meta, prospectAvatarKey: avatar.key })
+                }
+                className={`flex min-h-11 items-center gap-2 rounded-xl border px-3 py-2 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#3E6BFF] disabled:opacity-50 ${
+                  meta.prospectAvatarKey === avatar.key
+                    ? "border-[#3E6BFF] bg-[#3E6BFF]/10 text-white"
+                    : "border-[#1e222c] text-[#9AA1B2]"
+                }`}
+              >
+                <ProspectAvatar avatarKey={avatar.key} size={24} />
+                {avatar.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 text-xs text-[#9AA1B2]">
+            <ProspectAvatar
+              avatarKey={meta.prospectAvatarKey}
+              fallbackText={meta.name}
+              size={40}
+              decorative={false}
+            />
+            Aperçu de l&apos;avatar sélectionné.
+          </div>
         </div>
         <label className={labelCls}>
           Offre
