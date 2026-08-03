@@ -1,14 +1,20 @@
 /**
- * Helpers purs de présentation du parcours Missions (lot L).
+ * Helpers purs de présentation du parcours Missions (lots L / N2).
  * Aucune règle métier dupliquée : les statuts, l'ordre, le déblocage et la
- * recommandation restent calculés par le moteur du lot I (`teleproMissions`).
- * Ce module ne fait que traduire un statut déjà calculé en variante visuelle.
+ * recommandation restent calculés par le moteur (`teleproMissions`).
  */
 
 import { ExerciseMissionStatus } from "@/lib/teleproMissions";
-import type { MissionExerciseView } from "@/lib/teleproMissions";
+import type {
+  MissionExerciseView,
+  TeleproMissionExerciseNode,
+} from "@/lib/teleproMissions";
 
-export type MissionNodeVariant = "completed" | "current" | "available" | "locked";
+export type MissionNodeVariant =
+  | "completed"
+  | "current"
+  | "available"
+  | "locked";
 
 /**
  * Progression globale en pourcentage (borné 0–100).
@@ -20,9 +26,9 @@ export function missionProgressPct(completed: number, total: number): number {
   return Math.max(0, Math.min(100, Math.round(ratio * 100)));
 }
 
-/** Variante visuelle d'un nœud, dérivée du statut calculé par le lot I. */
+/** Variante visuelle d'un nœud, dérivée du statut calculé. */
 export function missionNodeVariant(
-  status: MissionExerciseView["status"],
+  status: MissionExerciseView["status"] | TeleproMissionExerciseNode["status"],
 ): MissionNodeVariant {
   switch (status) {
     case ExerciseMissionStatus.COMPLETED:
@@ -41,6 +47,15 @@ export function missionNodeVariant(
  * et qu'il n'est pas verrouillé. Garantit qu'un nœud LOCKED n'a jamais de lien.
  */
 export function isLaunchable(exercise: MissionExerciseView): boolean {
+  return (
+    exercise.status !== ExerciseMissionStatus.LOCKED &&
+    typeof exercise.ctaHref === "string" &&
+    exercise.ctaHref.length > 0
+  );
+}
+
+/** Variante pour les nœuds du catalogue N2. */
+export function isLaunchableNode(exercise: TeleproMissionExerciseNode): boolean {
   return (
     exercise.status !== ExerciseMissionStatus.LOCKED &&
     typeof exercise.ctaHref === "string" &&

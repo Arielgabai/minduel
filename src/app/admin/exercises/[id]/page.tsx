@@ -602,50 +602,98 @@ export default function AdminExerciseDetailPage() {
             </select>
           </label>
         </div>
-        <div className="space-y-2">
-          <p className={labelCls}>Avatar du prospect</p>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              disabled={archived || busy}
-              onClick={() => setMeta({ ...meta, prospectAvatarKey: "" })}
-              className={`min-h-11 rounded-xl border px-3 py-2 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#3E6BFF] disabled:opacity-50 ${
-                meta.prospectAvatarKey === ""
-                  ? "border-[#3E6BFF] bg-[#3E6BFF]/10 text-white"
-                  : "border-[#1e222c] text-[#9AA1B2]"
-              }`}
-            >
-              Aucun
-            </button>
-            {PROSPECT_AVATARS.map((avatar) => (
+        <fieldset className="space-y-4 rounded-xl border border-[#1e222c] p-4">
+          <legend className="px-1 text-sm font-semibold text-white">
+            Prospect simulé
+          </legend>
+
+          <div className="space-y-2">
+            <p className={labelCls}>Photo</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
               <button
-                key={avatar.key}
                 type="button"
                 disabled={archived || busy}
-                onClick={() =>
-                  setMeta({ ...meta, prospectAvatarKey: avatar.key })
-                }
-                className={`flex min-h-11 items-center gap-2 rounded-xl border px-3 py-2 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#3E6BFF] disabled:opacity-50 ${
-                  meta.prospectAvatarKey === avatar.key
+                onClick={() => setMeta({ ...meta, prospectAvatarKey: "" })}
+                className={`flex min-h-11 flex-col items-center justify-center gap-1 rounded-xl border px-2 py-2 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#3E6BFF] disabled:opacity-50 ${
+                  meta.prospectAvatarKey === ""
                     ? "border-[#3E6BFF] bg-[#3E6BFF]/10 text-white"
                     : "border-[#1e222c] text-[#9AA1B2]"
                 }`}
               >
-                <ProspectAvatar avatarKey={avatar.key} size={24} />
-                {avatar.label}
+                Aucun
               </button>
-            ))}
+              {PROSPECT_AVATARS.map((avatar) => (
+                <button
+                  key={avatar.key}
+                  type="button"
+                  disabled={archived || busy}
+                  aria-pressed={meta.prospectAvatarKey === avatar.key}
+                  onClick={() =>
+                    setMeta({ ...meta, prospectAvatarKey: avatar.key })
+                  }
+                  className={`flex min-h-11 flex-col items-center justify-center gap-1 rounded-xl border px-2 py-2 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#3E6BFF] disabled:opacity-50 ${
+                    meta.prospectAvatarKey === avatar.key
+                      ? "border-[#3E6BFF] bg-[#3E6BFF]/10 text-white"
+                      : "border-[#1e222c] text-[#9AA1B2]"
+                  }`}
+                >
+                  <ProspectAvatar avatarKey={avatar.key} size={44} />
+                  {avatar.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-3 text-xs text-[#9AA1B2]">
+              <ProspectAvatar
+                avatarKey={meta.prospectAvatarKey}
+                fallbackText={meta.name}
+                size={72}
+                decorative={false}
+              />
+              <span>
+                Aperçu agrandi
+                {meta.prospectAvatarKey
+                  ? ` — ${meta.prospectAvatarKey}`
+                  : " — aucun portrait"}
+                . La photo et la personnalité sont indépendantes.
+              </span>
+            </div>
           </div>
-          <div className="flex items-center gap-2 text-xs text-[#9AA1B2]">
-            <ProspectAvatar
-              avatarKey={meta.prospectAvatarKey}
-              fallbackText={meta.name}
-              size={40}
-              decorative={false}
+
+          <label className={labelCls}>
+            Personnalité et consignes de jeu
+            <textarea
+              rows={6}
+              className={fieldCls}
+              disabled={archived || busy}
+              value={meta.personality}
+              onChange={(e) =>
+                setMeta({ ...meta, personality: e.target.value })
+              }
+              placeholder="Ton et manière de parler, patience, confiance, résistance, objections habituelles, connaissance de l'offre, infos cachées, conditions pour se laisser convaincre, moment de révélation…"
             />
-            Aperçu de l&apos;avatar sélectionné.
-          </div>
-        </div>
+          </label>
+          <p className="text-xs text-[#9AA1B2]">
+            Cette personnalité alimente la construction locale du persona
+            (`PROSPECT_PERSONA` via `buildProspectPersona`). Deux exercices
+            peuvent partager la même photo avec des personnalités différentes.
+          </p>
+          {exercise?.currentBundle?.status === "PUBLISHED" ? (
+            <p
+              className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100"
+              role="status"
+            >
+              Un PromptBundle administrateur est déjà publié. Modifier la
+              personnalité ici n&apos;écrase pas ce bundle : mettez à jour les
+              prompts et republiez explicitement pour changer le comportement
+              effectif de la simulation.
+            </p>
+          ) : (
+            <p className="text-xs text-[#9AA1B2]">
+              Sans PromptBundle publié, la personnalité participe au persona
+              local à la prochaine génération/publication de prompts.
+            </p>
+          )}
+        </fieldset>
         <label className={labelCls}>
           Offre
           <textarea rows={2} className={fieldCls} disabled={archived || busy} value={meta.offer} onChange={(e) => setMeta({ ...meta, offer: e.target.value })} />
@@ -661,10 +709,6 @@ export default function AdminExerciseDetailPage() {
         <label className={labelCls}>
           Objectif
           <textarea rows={2} className={fieldCls} disabled={archived || busy} value={meta.objective} onChange={(e) => setMeta({ ...meta, objective: e.target.value })} />
-        </label>
-        <label className={labelCls}>
-          Personnalité
-          <input className={fieldCls} disabled={archived || busy} value={meta.personality} onChange={(e) => setMeta({ ...meta, personality: e.target.value })} />
         </label>
         <label className={labelCls}>
           Objections (une par ligne)

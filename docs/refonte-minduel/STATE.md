@@ -125,13 +125,13 @@ Parcours court fonctionnel : accueil liste de scénarios assignés (`/app`), pr�
 | **L** | Alignement visuel Missions / appel / fin d’exercice | **Livré** |
 | **M** | Progression avancée (Tendances, Comparatif, Diagnostic, Badges) | **Livré** |
 | **N1** | Catalogue Missions administrable (thèmes, phases, avatars) | **Livré** (migration non exécutée) |
-| **N2** | Rendu télépro Missions + portraits définitifs | À faire |
+| **N2** | Rendu télépro Missions + portraits définitifs | **Livré** (migration N1 toujours non exécutée) |
 | **Ultérieur** | Upload manuel + analyse d'appels réels + écart simulé/réel (coûts IA) | Hors feuille immédiate |
 | **Reporté** | Ringover (aucune connexion, synchro, env, route, ni mention « disponible ») | Reporté |
 
 **Contenu Skills :** intégralement administrable ; **aucune donnée de production Skills n'a été créée** ni seedée au moment des lots J–M. La migration Skills a été **appliquée en production** lors du déploiement V2 (voir LOT RELEASE-CLOSE) ; aucun seed / backfill Skills.
 
-**Prochain lot recommandé :** **LOT N2** (rendu télépro Missions sur le catalogue N1 + portraits définitifs), après revue et éventuelle exécution contrôlée de la migration `20260803112000_mission_catalog`. Surveillance ops post-V2 inchangée (baseline `failed: 2`, Auto-Deploy OFF).
+**Prochain lot recommandé :** **LOT N3** — simplification de création/publication des articles Skills et derniers ajustements visuels. Migration catalogue Missions `20260803112000_mission_catalog` toujours **non exécutée**. Surveillance ops post-V2 inchangée (baseline `failed: 2`, Auto-Deploy OFF).
 
 ## Questions ouvertes (3)
 
@@ -655,3 +655,47 @@ Toutes les routes API sont protégées par `requirePlatformAdmin`. Enveloppes `{
 - **Aucune** migration / base / seed / backfill / réseau / OpenAI dans ce lot.
 - **Aucun** commit.
 - Migration **non exécutée** ; production **non migrée**.
+
+---
+
+## Lot N2 — Parcours Missions télépro + avatars + nav basse (03/08/2026)
+
+**Objectif unique :** connecter le catalogue Missions N1 à l'expérience télépro (Thème → Phase → Exercices), portraits administrables, personnalité par exercice, navigation basse persistante.
+
+### Livré
+
+- Catalogue télépro Thème → Phase → Exercice (`buildTeleproMissionsCatalogView` / `loadTeleproMissionsCatalogView`).
+- Compatibilité des exercices non classés via thème synthétique « Parcours existant » (slug réservé `__parcours-existant__`, phases dérivées de `missionLevel`, aucun seed/backfill).
+- Dix avatars WebP locaux (`public/avatars/prospects/prospect-01.webp` … `10`, 512×512) associés aux clés N1 stables.
+- Photo configurable côté admin (section **Prospect simulé**, grille ≥ 44 px) → `Scenario.prospectAvatarKey`.
+- Personnalité configurable par exercice (`Scenario.personality`) ; indépendante de la photo ; alimente `buildProspectPersona` / `PROSPECT_PERSONA` local.
+- Relation explicite avec PromptBundle : mise à jour métadonnées **ne régénère pas** un bundle publié ; avertissement admin + republication explicite requise.
+- Navigation basse persistante : `TeleproShell` en `100dvh` flex colonne, contenu seul scrollable, nav `flex-shrink-0` hors flux (plus de `sticky` après contenu) ; masquée sur prepare/call/done/analysis.
+- Pages `/app/missions`, `/app/missions/[themeSlug]`, `/app/missions/[themeSlug]/[stageSlug]` ; accueil aligné sur la recommandation et l'aperçu des thèmes.
+- Portrait sur préparation + `CallClient` + `RealtimeCallClient` (invariants DEMO/Realtime préservés).
+
+### Vérifications
+
+| Contrôle | Résultat |
+|---|---|
+| `npm test -- tests/teleproMissions.test.ts tests/teleproShell.test.ts tests/lotN2.test.ts tests/adminExercisesUi.test.ts tests/exerciseAdmin.test.ts` | OK — **119** tests |
+| `npx tsc --noEmit` | OK |
+| `npm run lint --if-present` | OK — No ESLint warnings or errors |
+| `npx prisma validate` | OK |
+| `npm test` | OK — **455** tests / 27 fichiers |
+| `npm run build` | OK — routes `/app/missions/[themeSlug]` et `/[stageSlug]` générées |
+| `git diff --check` | OK |
+| 10 WebP 512×512 | OK |
+| Migration N1 | **Toujours non exécutée** |
+| Prisma schema / migrations / package / lockfile | Non modifiés |
+
+### Reporté au LOT N3
+
+- Simplification de création/publication des articles Skills.
+- Derniers ajustements visuels.
+- Exécution contrôlée de la migration catalogue, seed, backfill, déploiement, commit.
+
+### Confirmations
+
+- **Aucune** migration / base / seed / backfill / OpenAI / réseau / simulation / micro / WebRTC réel.
+- **Aucun** commit.
