@@ -121,6 +121,10 @@ vi.mock("@/lib/auth", () => ({
   requireTelepro: vi.fn(async () => teleproUser),
 }));
 
+vi.mock("@/lib/platformCatalog", () => ({
+  resolvePlatformCatalogOrganizationId: vi.fn(async () => ORG),
+}));
+
 vi.mock("@/lib/config", () => ({
   isDemoMode: vi.fn(() => true),
 }));

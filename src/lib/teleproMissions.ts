@@ -210,9 +210,9 @@ export function isVisibleAssignedScenario(
 /** LOT O: org + PUBLISHED only (no ScenarioAssignment). */
 export function isVisiblePublishedOrgScenario(
   scenario: { status: string; organizationId: string },
-  organizationId: string,
+  catalogOrganizationId: string,
 ): boolean {
-  if (scenario.organizationId !== organizationId) return false;
+  if (scenario.organizationId !== catalogOrganizationId) return false;
   return scenario.status === ScenarioStatus.PUBLISHED;
 }
 

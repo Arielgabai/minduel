@@ -1,5 +1,6 @@
 import { handle, ok } from "@/lib/api";
 import { requirePlatformAdmin } from "@/lib/auth";
+import { resolvePlatformCatalogOrganizationId } from "@/lib/platformCatalog";
 import {
   createExerciseDraft,
   listExercises,
@@ -7,7 +8,8 @@ import {
 
 export async function GET(req: Request) {
   return handle(async () => {
-    const admin = await requirePlatformAdmin();
+    await requirePlatformAdmin();
+    const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
     const url = new URL(req.url);
     const filters = {
       status: url.searchParams.get("status") ?? undefined,
@@ -16,7 +18,7 @@ export async function GET(req: Request) {
       missionThemeId: url.searchParams.get("missionThemeId") ?? undefined,
       missionStageId: url.searchParams.get("missionStageId") ?? undefined,
     };
-    const items = await listExercises(admin.organizationId, filters);
+    const items = await listExercises(catalogOrganizationId, filters);
     return ok({ items });
   });
 }
@@ -24,9 +26,10 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   return handle(async () => {
     const admin = await requirePlatformAdmin();
+    const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
     const body = await req.json();
     const exercise = await createExerciseDraft(
-      admin.organizationId,
+      catalogOrganizationId,
       admin.id,
       body,
     );

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { handle, ok } from "@/lib/api";
 import { requirePlatformAdmin } from "@/lib/auth";
+import { resolvePlatformCatalogOrganizationId } from "@/lib/platformCatalog";
 import {
   createSkillArticle,
   createSkillCategory,
@@ -15,8 +16,9 @@ const EntitySchema = z.object({
 /** Arbre Catégories → Sections → Articles (sans corps d'articles). */
 export async function GET() {
   return handle(async () => {
-    const admin = await requirePlatformAdmin();
-    const tree = await listSkillsTree(admin.organizationId);
+    await requirePlatformAdmin();
+    const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
+    const tree = await listSkillsTree(catalogOrganizationId);
     return ok({ tree });
   });
 }
@@ -25,6 +27,7 @@ export async function GET() {
 export async function POST(req: Request) {
   return handle(async () => {
     const admin = await requirePlatformAdmin();
+    const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
     const body = await req.json();
     const { entity } = EntitySchema.parse(body);
     const input = { ...(body as Record<string, unknown>) };
@@ -33,17 +36,17 @@ export async function POST(req: Request) {
     switch (entity) {
       case "category":
         return ok(
-          await createSkillCategory(admin.organizationId, admin.id, input),
+          await createSkillCategory(catalogOrganizationId, admin.id, input),
           201,
         );
       case "section":
         return ok(
-          await createSkillSection(admin.organizationId, admin.id, input),
+          await createSkillSection(catalogOrganizationId, admin.id, input),
           201,
         );
       case "article":
         return ok(
-          await createSkillArticle(admin.organizationId, admin.id, input),
+          await createSkillArticle(catalogOrganizationId, admin.id, input),
           201,
         );
     }

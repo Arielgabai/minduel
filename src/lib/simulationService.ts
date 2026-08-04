@@ -22,6 +22,7 @@ import {
   type SimulationPromptArtifacts,
 } from "./promptArtifacts";
 import type { EvaluationPromptOverrides } from "./providers";
+import { resolvePlatformCatalogOrganizationId } from "./platformCatalog";
 
 /** URL de la page d'analyse d'une simulation (jamais /app). */
 export function analysisUrlFor(simulationId: string): string {
@@ -97,9 +98,13 @@ async function resolvePinnedPromptBundle(
     throw new HttpError(500, "Bundle de prompts incohérent avec la simulation.");
   }
   if (
-    bundle.scenarioId !== sim.scenarioId ||
-    bundle.organizationId !== sim.organizationId
+    bundle.scenarioId !== sim.scenarioId
   ) {
+    throw new HttpError(500, "Bundle de prompts incohérent avec la simulation.");
+  }
+  // Bundle appartient au catalogue plateforme ; la simulation appartient à l'org du télépro.
+  const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
+  if (bundle.organizationId !== catalogOrganizationId) {
     throw new HttpError(500, "Bundle de prompts incohérent avec la simulation.");
   }
   if (bundle.version !== sim.promptBundleVersion) {

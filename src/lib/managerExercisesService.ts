@@ -2,6 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/db";
 import { LEVEL_LABELS, ScenarioStatus } from "@/lib/enums";
+import { resolvePlatformCatalogOrganizationId } from "@/lib/platformCatalog";
 import { isProspectAvatarKey } from "@/lib/prospectAvatars";
 import {
   isReadyCatalogExercise,
@@ -107,10 +108,10 @@ function toCatalogExerciseInput(row: {
 }
 
 async function loadPublishedCatalogMeta(
-  organizationId: string,
+  catalogOrganizationId: string,
 ): Promise<{ themes: MissionThemeInput[]; stages: MissionStageInput[] }> {
   const themes = await prisma.missionTheme.findMany({
-    where: { organizationId, status: "PUBLISHED" },
+    where: { organizationId: catalogOrganizationId, status: "PUBLISHED" },
     select: THEME_SAFE_SELECT,
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
   });
@@ -120,7 +121,7 @@ async function loadPublishedCatalogMeta(
       ? []
       : await prisma.missionStage.findMany({
           where: {
-            organizationId,
+            organizationId: catalogOrganizationId,
             status: "PUBLISHED",
             themeId: { in: themeIds },
           },
@@ -131,18 +132,25 @@ async function loadPublishedCatalogMeta(
 }
 
 /**
- * Catalogue manager : exercices PUBLISHED prêts de l'organisation.
+ * Catalogue manager : exercices PUBLISHED prêts du catalogue plateforme.
+ * `organizationId` = organisation du manager (contexte tenant) ;
+ * le contenu pédagogique est lu depuis l'organisation catalogue.
  * Aucun teleproId, aucun verrouillage, aucune affectation.
  */
 export async function loadManagerExercisesCatalog(
   organizationId: string,
 ): Promise<ManagerExercisesCatalogView> {
+  void organizationId;
+  const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
   const [rows, { themes, stages }] = await Promise.all([
     prisma.scenario.findMany({
-      where: { organizationId, status: ScenarioStatus.PUBLISHED },
+      where: {
+        organizationId: catalogOrganizationId,
+        status: ScenarioStatus.PUBLISHED,
+      },
       select: SCENARIO_MANAGER_SELECT,
     }),
-    loadPublishedCatalogMeta(organizationId),
+    loadPublishedCatalogMeta(catalogOrganizationId),
   ]);
 
   const exercises: MissionExerciseInput[] = [];
@@ -163,17 +171,19 @@ export async function loadManagerExerciseTheme(
 }
 
 /**
- * Fiche lecture seule d'un exercice PUBLISHED de l'organisation.
- * Retourne null → 404 (autre org / non publié / absent).
+ * Fiche lecture seule d'un exercice PUBLISHED du catalogue plateforme.
+ * Retourne null → 404 (hors catalogue / non publié / absent).
  */
 export async function loadManagerExerciseDetail(
   organizationId: string,
   scenarioId: string,
 ): Promise<ManagerExerciseDetailView | null> {
+  void organizationId;
+  const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
   const row = await prisma.scenario.findFirst({
     where: {
       id: scenarioId,
-      organizationId,
+      organizationId: catalogOrganizationId,
       status: ScenarioStatus.PUBLISHED,
     },
     select: {

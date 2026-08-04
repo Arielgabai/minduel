@@ -2,6 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/db";
 import { ScenarioStatus } from "@/lib/enums";
+import { resolvePlatformCatalogOrganizationId } from "@/lib/platformCatalog";
 import { isProspectAvatarKey } from "@/lib/prospectAvatars";
 import {
   buildTeleproMissionsCatalogView,
@@ -114,22 +115,23 @@ function toCatalogExerciseInput(row: {
 }
 
 /**
- * Catalogue org global (LOT O) : tous les exercices PUBLISHED prêts de
- * l'organisation, sans dépendre de ScenarioAssignment.
- * Les tentatives restent personnelles (teleproId) pour progression / verrous.
+ * Catalogue pédagogique global (LOT P2) : exercices PUBLISHED prêts de
+ * l'organisation plateforme, sans ScenarioAssignment.
+ * Les tentatives restent personnelles (teleproId + org utilisateur).
  */
 async function loadPublishedOrgExercisesAndAttempts(
   teleproId: string,
-  organizationId: string,
+  userOrganizationId: string,
   options?: { forCatalog?: boolean },
 ): Promise<{
   exercises: MissionExerciseInput[];
   attempts: MissionAttemptInput[];
 }> {
+  const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
   const forCatalog = options?.forCatalog === true;
   const rows = await prisma.scenario.findMany({
     where: {
-      organizationId,
+      organizationId: catalogOrganizationId,
       status: ScenarioStatus.PUBLISHED,
     },
     select: forCatalog ? SCENARIO_CATALOG_SELECT : SCENARIO_SAFE_SELECT,
@@ -185,7 +187,7 @@ async function loadPublishedOrgExercisesAndAttempts(
     attempts = await prisma.simulation.findMany({
       where: {
         teleproId,
-        organizationId,
+        organizationId: userOrganizationId,
         scenarioId: { in: scenarioIds },
       },
       select: {
@@ -209,11 +211,13 @@ async function loadPublishedOrgExercisesAndAttempts(
   return { exercises, attempts };
 }
 
-async function loadPublishedCatalogMeta(
-  organizationId: string,
-): Promise<{ themes: MissionThemeInput[]; stages: MissionStageInput[] }> {
+async function loadPublishedCatalogMeta(): Promise<{
+  themes: MissionThemeInput[];
+  stages: MissionStageInput[];
+}> {
+  const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
   const themes = await prisma.missionTheme.findMany({
-    where: { organizationId, status: "PUBLISHED" },
+    where: { organizationId: catalogOrganizationId, status: "PUBLISHED" },
     select: THEME_SAFE_SELECT,
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
   });
@@ -224,7 +228,7 @@ async function loadPublishedCatalogMeta(
       ? []
       : await prisma.missionStage.findMany({
           where: {
-            organizationId,
+            organizationId: catalogOrganizationId,
             status: "PUBLISHED",
             themeId: { in: themeIds },
           },
@@ -237,8 +241,7 @@ async function loadPublishedCatalogMeta(
 
 /**
  * Charge le modèle de vue missions plat (compat lot I).
- * Filtre : organizationId + Scenario.status PUBLISHED (catalogue global LOT O).
- * Progression / tentatives toujours scoped teleproId.
+ * Catalogue = organisation plateforme ; progression scoped teleproId + org user.
  */
 export async function loadTeleproMissionsView(
   teleproId: string,
@@ -253,9 +256,8 @@ export async function loadTeleproMissionsView(
 
 /**
  * Catalogue Thème → Niveau → Exercice pour le téléprospecteur.
- * Catalogue global org : PUBLISHED prêts ; thèmes/niveaux DRAFT/ARCHIVED exclus.
- * Verrouillage progressif personnel via tentatives (teleproId).
- * Exercices incomplets (avatar, personnalité, prompt publié) exclus avant le build.
+ * Catalogue global plateforme : PUBLISHED prêts ; thèmes/niveaux DRAFT/ARCHIVED exclus.
+ * Verrouillage progressif personnel via tentatives (teleproId + org user).
  */
 export async function loadTeleproMissionsCatalogView(
   teleproId: string,
@@ -265,7 +267,7 @@ export async function loadTeleproMissionsCatalogView(
     loadPublishedOrgExercisesAndAttempts(teleproId, organizationId, {
       forCatalog: true,
     }),
-    loadPublishedCatalogMeta(organizationId),
+    loadPublishedCatalogMeta(),
   ]);
   return buildTeleproMissionsCatalogView(
     exercises,

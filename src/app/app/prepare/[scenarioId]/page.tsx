@@ -5,6 +5,7 @@ import { requireTelepro } from "@/lib/auth";
 import { Card, Badge, SectionTitle } from "@/components/ui";
 import { ProspectAvatar } from "@/components/ProspectAvatar";
 import { LEVEL_LABELS, CALL_TYPE_LABELS } from "@/lib/enums";
+import { resolvePlatformCatalogOrganizationId } from "@/lib/platformCatalog";
 import { formatDuration } from "@/lib/utils";
 import { PrepareClient } from "./PrepareClient";
 
@@ -15,17 +16,18 @@ export default async function PreparePage({
 }) {
   const { scenarioId } = await params;
   const user = await requireTelepro();
+  const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
 
   const scenario = await prisma.scenario.findFirst({
     where: {
       id: scenarioId,
-      organizationId: user.organizationId,
+      organizationId: catalogOrganizationId,
       status: "PUBLISHED",
     },
   });
   if (!scenario) notFound();
 
-  // LOT O : catalogue global org — plus de garde ScenarioAssignment.
+  // LOT O/P2 : catalogue global plateforme — plus de garde ScenarioAssignment.
   void user.id;
 
   return (
