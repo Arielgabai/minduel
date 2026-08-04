@@ -816,3 +816,21 @@ Toutes les routes API sont protégées par `requirePlatformAdmin`. Enveloppes `{
 **Vérifications :** `tests/lotO.test.ts` OK (17) ; suite `npm test` OK — **528** / 528 (30 fichiers) ; `tsc` / lint / prisma / build OK ; prisma/package inchangés.
 
 **Confirmations :** aucune migration / base / seed / OpenAI / commit ; `ScenarioAssignment` ignoré dans les KPI manager visibles.
+
+## Lot P1 — Refonte visuelle `/app/missions` (page 14) (04/08/2026)
+
+**Objectif unique :** afficher les thèmes administrables de `/app/missions` avec le langage visuel de la maquette V2 page 14 (parcours vertical à nœuds), sans modifier la logique métier.
+
+**Livré :**
+
+- Remplacement des cartes rectangulaires par un parcours vertical : nœuds circulaires numérotés `1…N`, traits de liaison, nom + progression à droite, ligne entière cliquable vers `/app/missions/[themeSlug]`.
+- En-tête compact `Missions` + icône SVG locale + résumé dynamique (`n thèmes · x/y exercices terminés`).
+- États de présentation uniquement : terminé (dégradé bleu/violet/orange), en cours (anneau orange), recommandé (accent électrique), non commencé (cercle sombre, accessible), vide (`Aucun exercice disponible`) — **aucun** libellé `Verrouillé` au niveau thème.
+- Accessibilité : `aria-label` explicite, `sr-only` pour l'état, `focus-visible`, cibles ≥ 44 px, nœuds 60 px, padding bas pour la nav shell inchangée.
+- Tests `tests/lotP1.test.ts` (17) : dynamisme, ordre, numérotation, liens, progression, états, a11y, anti-fuite, `export default` seul.
+
+**Fichiers touchés (allowlist) :** `src/app/app/missions/page.tsx`, `tests/lotP1.test.ts`, `docs/refonte-minduel/STATE.md`.
+
+**Inchangé :** moteur `teleproMissions`, service, shell/nav, routes thème/niveau, avatars, simulations, Prisma, package.
+
+**Confirmations :** aucune logique métier / réseau / OpenAI / micro / simulation / base / commit.
