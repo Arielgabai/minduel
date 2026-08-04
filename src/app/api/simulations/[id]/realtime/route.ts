@@ -1,5 +1,6 @@
 import { handle, ok, fail } from "@/lib/api";
 import { requireTelepro } from "@/lib/auth";
+import { serverConfig } from "@/lib/config";
 import { getRealtimeSessionProvider } from "@/lib/providers";
 import { getPersonaForSimulation } from "@/lib/simulationService";
 import { rateLimit } from "@/lib/ratelimit";
@@ -42,12 +43,16 @@ export async function POST(
 
     // Ne jamais renvoyer la persona brute contenant les infos secrètes au client
     // en mode démo textuel : on ne l'expose que pour la négociation Realtime réelle.
+    // vadThreshold : nombre validé serveur uniquement (pas de secret, pas de
+    // NEXT_PUBLIC_) pour le session.update client ; le navigateur ne choisit pas
+    // le seuil.
     return ok({
       demo: session.demo,
       model: session.model,
       voice: session.voice,
       clientSecret: session.clientSecret ?? null,
       expiresAt: session.expiresAt ?? null,
+      vadThreshold: serverConfig.realtimeVadThreshold,
     });
   });
 }

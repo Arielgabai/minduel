@@ -127,6 +127,9 @@ vi.mock("@/lib/platformCatalog", () => ({
 
 vi.mock("@/lib/config", () => ({
   isDemoMode: vi.fn(() => true),
+  serverConfig: {
+    realtimeVadThreshold: 0.65,
+  },
 }));
 
 vi.mock("@/lib/ratelimit", () => ({

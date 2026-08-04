@@ -29,6 +29,7 @@ Généré à partir des usages réels du code (`src/lib/env.ts`, `src/lib/config
 | `OPENAI_SCENARIO_MODEL` | Non (défaut `gpt-5.6-terra`) | tous | Non | `gpt-5.6-terra` | Génération du scénario + grille depuis l'analyse (Responses API, JSON strict + Zod). |
 | `OPENAI_ANALYSIS_REASONING_EFFORT` | Non (défaut `medium`) | tous | Non | `medium` | Effort de raisonnement de l'analyse (`minimal`/`low`/`medium`/`high`). |
 | `OPENAI_REALTIME_VOICE` | Non (défaut `marin`) | tous | Non | `marin` | Voix de sortie GA du prospect IA Realtime (ex. `marin`, `cedar`, `alloy`). |
+| `OPENAI_REALTIME_VAD_THRESHOLD` | Non (défaut `0.65`, plage `0`–`1`) | web Realtime | Non | `0.65` | Seuil `server_vad` de la détection de parole Realtime (WebRTC). Plus la valeur est élevée, moins les bruits faibles déclenchent la parole ; une valeur trop élevée peut obliger l'utilisateur à parler plus fort. Validé strictement côté serveur (erreur de démarrage si invalide). **Pas nécessaire sur le worker** (celui-ci ne crée pas les sessions Realtime). Aucun préfixe `NEXT_PUBLIC_`. |
 | `STORAGE_DRIVER` | Non (défaut `local`) | tous | Non | `s3` | Pilote de stockage audio : `local` (dev) ou `s3` (prod). |
 | `AUDIO_STORAGE_DIR` | Non (défaut `./storage`) | dev (`local`) | Non | `./storage` | Répertoire de stockage local des audios (dev uniquement). |
 | `S3_BUCKET` | **Conditionnel** (si `STORAGE_DRIVER=s3`) | prod | Non | `minduel-recordings` | Bucket objet privé. |
