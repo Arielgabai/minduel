@@ -834,3 +834,42 @@ Toutes les routes API sont protégées par `requirePlatformAdmin`. Enveloppes `{
 **Inchangé :** moteur `teleproMissions`, service, shell/nav, routes thème/niveau, avatars, simulations, Prisma, package.
 
 **Confirmations :** aucune logique métier / réseau / OpenAI / micro / simulation / base / commit.
+
+## Lot P2 — Catalogue pédagogique global multi-organisations (04/08/2026)
+
+**Objectif unique :** thèmes, niveaux, exercices, PromptBundles et Skills administrés par `PLATFORM_ADMIN` forment un catalogue global visible par toutes les organisations, sans copie ni affectation ; simulations / résultats / progression restent isolés par organisation.
+
+### Architecture
+
+- `Organization.isPlatformCatalog` (défaut `false`) + index unique partiel PostgreSQL : au plus une org catalogue.
+- Module `src/lib/platformCatalog.ts` : `resolvePlatformCatalogOrganizationId()` — aucune org, une org, ou état incohérent ; pas de fallback vers l'org utilisateur ; id jamais exposé HTTP.
+- Script ops `npm run db:configure-platform-catalog -- --org-slug=…` (dry-run par défaut ; `--apply` + `ALLOW_PLATFORM_CATALOG_CONFIG=true` en prod).
+- Runtime : `catalogOrganizationId` pour contenus pédagogiques ; `user.organizationId` pour simulations, évaluations, équipe, historique.
+
+### Livré
+
+- Migration additive `20260804140000_platform_catalog` (non exécutée dans ce lot).
+- Runtime télépro / manager / Skills / débrief / prepare / `POST /api/simulations` / snapshot PromptBundle.
+- Admin missions / exercises / skills → organisation catalogue (indépendamment de l'org d'appartenance du `PLATFORM_ADMIN`).
+- Tests `tests/lotP2.test.ts` + mocks adaptés (`simulationPromptSnapshot`, `skillsTelepro`, `debrief`).
+
+### Procédure future de déploiement (ne pas exécuter ici)
+
+1. Export PostgreSQL.
+2. Déployer le worker seul pour appliquer la migration additive.
+3. Dry-run `npm run db:configure-platform-catalog -- --org-slug=<slug>`.
+4. Vérifier que l'org choisie contient le catalogue attendu.
+5. Activer temporairement `ALLOW_PLATFORM_CATALOG_CONFIG=true`.
+6. `--apply`.
+7. Relancer le dry-run (idempotence).
+8. Retirer le flag.
+9. Déployer le web sur le même SHA.
+10. Smoke manager + télépro d'une seconde organisation.
+
+**Le nouveau web ne doit pas être basculé avant qu'une organisation catalogue soit configurée.**
+
+### Confirmations
+
+- **Aucune** migration / `--apply` / base réelle / seed / OpenAI / réseau / simulation / micro.
+- **Aucun** commit / push.
+- Contenu hors catalogue signalé par le dry-run, jamais déplacé/copié automatiquement.

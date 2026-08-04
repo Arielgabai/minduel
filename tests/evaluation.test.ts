@@ -3,6 +3,12 @@ import { EvaluationResultSchema } from "@/lib/providers/schemas";
 import { __resetEnvCacheForTests } from "@/lib/env";
 import { hashPromptArtifacts } from "@/lib/promptArtifacts";
 
+vi.mock("@/lib/platformCatalog", () => ({
+  resolvePlatformCatalogOrganizationId: vi.fn(
+    async () => "00000000-0000-4000-8000-000000000001",
+  ),
+}));
+
 const evalRunState = vi.hoisted(() => ({
   bundles: [] as Array<{
     id: string;

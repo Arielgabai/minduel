@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/db";
+import { resolvePlatformCatalogOrganizationId } from "@/lib/platformCatalog";
 import { parseJson } from "@/lib/utils";
 import {
   SkillStatus,
@@ -68,12 +69,15 @@ const PUBLISHED = SkillStatus.PUBLISHED;
 
 /**
  * Charge la hiérarchie entièrement publiée (trois niveaux PUBLISHED).
- * `teleproId` est reçu explicitement (traçabilité du contexte d'appel).
+ * Contenu lu depuis l'organisation catalogue plateforme (LOT P2).
+ * `teleproId` / `organizationId` = contexte appelant (isolation tenant).
  */
 async function loadPublishedHierarchy(teleproId: string, organizationId: string) {
   void teleproId;
+  void organizationId;
+  const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
   const categories = await prisma.skillCategory.findMany({
-    where: { organizationId, status: PUBLISHED },
+    where: { organizationId: catalogOrganizationId, status: PUBLISHED },
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     select: {
       id: true,
@@ -89,7 +93,7 @@ async function loadPublishedHierarchy(teleproId: string, organizationId: string)
   const categoryIds = categories.map((c) => c.id);
   const sections = await prisma.skillSection.findMany({
     where: {
-      organizationId,
+      organizationId: catalogOrganizationId,
       status: PUBLISHED,
       categoryId: { in: categoryIds },
     },
@@ -108,7 +112,7 @@ async function loadPublishedHierarchy(teleproId: string, organizationId: string)
       ? []
       : await prisma.skillArticle.findMany({
           where: {
-            organizationId,
+            organizationId: catalogOrganizationId,
             status: PUBLISHED,
             sectionId: { in: sectionIds },
             categoryId: { in: categoryIds },
@@ -179,8 +183,14 @@ export async function loadSkillsCategoryView(
   categorySlug: string,
 ): Promise<SkillsCategoryView | null> {
   void teleproId;
+  void organizationId;
+  const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
   const category = await prisma.skillCategory.findFirst({
-    where: { organizationId, slug: categorySlug, status: PUBLISHED },
+    where: {
+      organizationId: catalogOrganizationId,
+      slug: categorySlug,
+      status: PUBLISHED,
+    },
     select: {
       id: true,
       name: true,
@@ -192,7 +202,11 @@ export async function loadSkillsCategoryView(
   if (!category) return null;
 
   const sections = await prisma.skillSection.findMany({
-    where: { organizationId, categoryId: category.id, status: PUBLISHED },
+    where: {
+      organizationId: catalogOrganizationId,
+      categoryId: category.id,
+      status: PUBLISHED,
+    },
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     select: { id: true, name: true, slug: true, description: true },
   });
@@ -202,7 +216,7 @@ export async function loadSkillsCategoryView(
       ? []
       : await prisma.skillArticle.findMany({
           where: {
-            organizationId,
+            organizationId: catalogOrganizationId,
             categoryId: category.id,
             sectionId: { in: sectionIds },
             status: PUBLISHED,
@@ -243,7 +257,7 @@ export async function loadSkillsCategoryView(
 /**
  * Vue article `/app/skills/[categorySlug]/[articleSlug]`.
  * Retourne null (→ 404) si l'article, sa section ou sa catégorie n'est pas
- * PUBLISHED, si le slug de catégorie ne correspond pas, ou hors organisation.
+ * PUBLISHED, si le slug de catégorie ne correspond pas, ou hors catalogue.
  */
 export async function loadSkillsArticleView(
   teleproId: string,
@@ -252,13 +266,19 @@ export async function loadSkillsArticleView(
   articleSlug: string,
 ): Promise<SkillsArticleView | null> {
   void teleproId;
+  void organizationId;
+  const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
   const article = await prisma.skillArticle.findFirst({
     where: {
-      organizationId,
+      organizationId: catalogOrganizationId,
       slug: articleSlug,
       status: PUBLISHED,
-      category: { organizationId, slug: categorySlug, status: PUBLISHED },
-      section: { organizationId, status: PUBLISHED },
+      category: {
+        organizationId: catalogOrganizationId,
+        slug: categorySlug,
+        status: PUBLISHED,
+      },
+      section: { organizationId: catalogOrganizationId, status: PUBLISHED },
     },
     select: {
       title: true,

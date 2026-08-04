@@ -18,6 +18,7 @@
     "db:seed:exercises": "tsx prisma/seedExercises.ts",
     "db:promote-admin": "tsx prisma/promoteAdmin.ts",
     "db:backfill-prompt-bundles": "tsx prisma/backfillPublishedPromptBundles.ts",
+    "db:configure-platform-catalog": "tsx prisma/configurePlatformCatalog.ts",
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset --force"
   },

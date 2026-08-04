@@ -45,6 +45,8 @@ Généré à partir des usages réels du code (`src/lib/env.ts`, `src/lib/config
 | `SPEAKER_ASSIGNMENT_CONFIDENCE_THRESHOLD` | Non (défaut `0.75`, 0–1) | tous | Non | `0.75` | Seuil sous lequel le manager doit identifier le commercial (attribution des locuteurs). |
 | `LOG_LEVEL` | Non (défaut `info`) | tous | Non | `info` | Niveau de journalisation (`debug`/`info`/`warn`/`error`). |
 | `ALLOW_DEMO_SEED` | Non (défaut `false`) | démo assumée | Non | `true` | Autorise le seed de démonstration en production (garde-fou). |
+| `ALLOW_PLATFORM_CATALOG_CONFIG` | Non (défaut `false`) | ops ponctuelle | Non | `true` | Autorise `--apply` du script `db:configure-platform-catalog` en production. **Temporaire** : retirer ou remettre à `false` immédiatement après usage. |
+| `PLATFORM_CATALOG_ORG_SLUG` | Non | ops ponctuelle | Non | *(slug org)* | Alternative à `--org-slug=` pour le script de configuration catalogue. Aucune valeur réelle dans le dépôt. |
 | `PORT` | Non (défaut `3000`) | prod | Non | `3000` | Port d'écoute (fourni par l'hébergeur ; respecté par `next start`). |
 | `HOSTNAME` | Non (défaut `0.0.0.0` en Docker) | prod | Non | `0.0.0.0` | Interface d'écoute. |
 

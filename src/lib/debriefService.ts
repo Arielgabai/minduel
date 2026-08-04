@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/db";
+import { resolvePlatformCatalogOrganizationId } from "@/lib/platformCatalog";
 import { SkillStatus } from "@/lib/skillsContent";
 import {
   MAX_SKILL_LINKS_PER_KEY,
@@ -172,14 +173,17 @@ async function loadPreviousAttempt(args: {
 }
 
 /**
- * Articles publiés mappés aux clés de compétences.
- * Exige Article + Section + Catégorie tous PUBLISHED, même organisation.
+ * Articles publiés mappés aux clés de compétences (catalogue plateforme).
+ * Exige Article + Section + Catégorie tous PUBLISHED, même org catalogue.
  * Ne charge jamais le corps (content) de l'article.
+ * `organizationId` = org du télépro (contexte appelant) ; mappings lus depuis le catalogue.
  */
 export async function loadPublishedSkillLinksByKeys(args: {
   organizationId: string;
   skillKeys: string[];
 }): Promise<Record<string, DebriefSkillLink[]>> {
+  void args.organizationId;
+  const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
   const keys = args.skillKeys
     .map((k) => normalizeSkillKey(k))
     .filter((k): k is string => k != null);
@@ -188,17 +192,17 @@ export async function loadPublishedSkillLinksByKeys(args: {
 
   const mappings = await prisma.skillArticleMapping.findMany({
     where: {
-      organizationId: args.organizationId,
+      organizationId: catalogOrganizationId,
       skillKey: { in: uniqueKeys },
       article: {
-        organizationId: args.organizationId,
+        organizationId: catalogOrganizationId,
         status: SkillStatus.PUBLISHED,
         category: {
-          organizationId: args.organizationId,
+          organizationId: catalogOrganizationId,
           status: SkillStatus.PUBLISHED,
         },
         section: {
-          organizationId: args.organizationId,
+          organizationId: catalogOrganizationId,
           status: SkillStatus.PUBLISHED,
         },
       },

@@ -10,6 +10,7 @@ import {
   SimulationMode,
   SimulationStatus,
 } from "@/lib/enums";
+import { resolvePlatformCatalogOrganizationId } from "@/lib/platformCatalog";
 import { opener, prospectNameFor } from "@/lib/simulationService";
 import {
   parsePromptArtifacts,
@@ -22,9 +23,10 @@ export async function POST(req: Request) {
   return handle(async () => {
     const user = await requireTelepro();
     const { scenarioId } = schema.parse(await req.json());
+    const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
 
     const scenario = await prisma.scenario.findFirst({
-      where: { id: scenarioId, organizationId: user.organizationId },
+      where: { id: scenarioId, organizationId: catalogOrganizationId },
     });
     if (!scenario) {
       return fail(404, "Scénario introuvable ou non publié.");
@@ -36,7 +38,7 @@ export async function POST(req: Request) {
       return fail(404, "Scénario introuvable ou non publié.");
     }
 
-    // LOT O : catalogue global — l'accès ne dépend plus de ScenarioAssignment.
+    // LOT O/P2 : catalogue global plateforme — l'accès ne dépend plus de ScenarioAssignment.
     // Mise à jour best-effort si une ligne historique existe encore.
     const assignment = await prisma.scenarioAssignment.findFirst({
       where: { scenarioId, teleproId: user.id },
@@ -49,7 +51,7 @@ export async function POST(req: Request) {
     const bundle = await prisma.promptBundle.findFirst({
       where: {
         id: scenario.publishedPromptBundleId,
-        organizationId: user.organizationId,
+        organizationId: catalogOrganizationId,
         scenarioId: scenario.id,
         status: PromptBundleStatus.PUBLISHED,
       },
@@ -71,6 +73,7 @@ export async function POST(req: Request) {
     const now = nowIso();
     const prospectName = prospectNameFor(scenarioId + user.id + now);
 
+    // Simulation toujours sous l'organisation du télépro (jamais sous le catalogue).
     const sim = await prisma.simulation.create({
       data: {
         organizationId: user.organizationId,

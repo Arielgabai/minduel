@@ -22,6 +22,11 @@ model Organization {
   slug                 String  @unique
   isActive             Boolean @default(true)
   isDemo               Boolean @default(false)
+  // LOT P2 : au plus une organisation propriétaire technique du catalogue
+  // pédagogique global (thèmes, niveaux, exercices, PromptBundles, Skills).
+  // Contrainte DB : index unique partiel WHERE isPlatformCatalog = true.
+  // Les utilisateurs / simulations / résultats de cette org ne sont pas globaux.
+  isPlatformCatalog    Boolean @default(false)
   // Réglages de confidentialité / conservation
   retentionDays        Int     @default(90)
   allowManagerPlayback Boolean @default(true)

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { HttpError } from "@/lib/httpError";
 import { handle, ok } from "@/lib/api";
 import { requirePlatformAdmin } from "@/lib/auth";
+import { resolvePlatformCatalogOrganizationId } from "@/lib/platformCatalog";
 import {
   archiveSkillArticle,
   archiveSkillCategory,
@@ -51,17 +52,18 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   return handle(async () => {
-    const admin = await requirePlatformAdmin();
+    await requirePlatformAdmin();
+    const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
     const { id } = await params;
     const entity = entityFromQuery(req);
     switch (entity) {
       case "category":
-        return ok(await getSkillCategory(id, admin.organizationId));
+        return ok(await getSkillCategory(id, catalogOrganizationId));
       case "section":
-        return ok(await getSkillSection(id, admin.organizationId));
+        return ok(await getSkillSection(id, catalogOrganizationId));
       case "article":
-        // Détail avec blocs : réservé au PLATFORM_ADMIN de l'organisation.
-        return ok(await getSkillArticle(id, admin.organizationId));
+        // Détail avec blocs : réservé au PLATFORM_ADMIN.
+        return ok(await getSkillArticle(id, catalogOrganizationId));
     }
   });
 }
@@ -72,6 +74,7 @@ export async function PATCH(
 ) {
   return handle(async () => {
     const admin = await requirePlatformAdmin();
+    const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
     const { id } = await params;
     const body = await req.json();
     const { entity } = BodyEntitySchema.parse(body);
@@ -80,15 +83,30 @@ export async function PATCH(
     switch (entity) {
       case "category":
         return ok(
-          await updateSkillCategory(id, admin.organizationId, admin.id, input),
+          await updateSkillCategory(
+            id,
+            catalogOrganizationId,
+            admin.id,
+            input,
+          ),
         );
       case "section":
         return ok(
-          await updateSkillSection(id, admin.organizationId, admin.id, input),
+          await updateSkillSection(
+            id,
+            catalogOrganizationId,
+            admin.id,
+            input,
+          ),
         );
       case "article":
         return ok(
-          await updateSkillArticle(id, admin.organizationId, admin.id, input),
+          await updateSkillArticle(
+            id,
+            catalogOrganizationId,
+            admin.id,
+            input,
+          ),
         );
     }
   });
@@ -100,17 +118,22 @@ export async function DELETE(
 ) {
   return handle(async () => {
     const admin = await requirePlatformAdmin();
+    const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
     const { id } = await params;
     const entity = entityFromQuery(req);
     switch (entity) {
       case "category":
         return ok(
-          await deleteSkillCategory(id, admin.organizationId, admin.id),
+          await deleteSkillCategory(id, catalogOrganizationId, admin.id),
         );
       case "section":
-        return ok(await deleteSkillSection(id, admin.organizationId, admin.id));
+        return ok(
+          await deleteSkillSection(id, catalogOrganizationId, admin.id),
+        );
       case "article":
-        return ok(await deleteSkillArticle(id, admin.organizationId, admin.id));
+        return ok(
+          await deleteSkillArticle(id, catalogOrganizationId, admin.id),
+        );
     }
   });
 }
@@ -121,6 +144,7 @@ export async function POST(
 ) {
   return handle(async () => {
     const admin = await requirePlatformAdmin();
+    const catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
     const { id } = await params;
     const body = await req.json();
     const { entity, action } = ActionSchema.parse(body);
@@ -150,6 +174,6 @@ export async function POST(
       },
     };
 
-    return ok(await handlers[entity][a](id, admin.organizationId, admin.id));
+    return ok(await handlers[entity][a](id, catalogOrganizationId, admin.id));
   });
 }

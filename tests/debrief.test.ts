@@ -221,6 +221,10 @@ function articleMatchesNested(
   return true;
 }
 
+vi.mock("@/lib/platformCatalog", () => ({
+  resolvePlatformCatalogOrganizationId: vi.fn(async () => "org1"),
+}));
+
 vi.mock("@/lib/db", () => ({
   prisma: {
     simulation: {

@@ -374,6 +374,8 @@ Trace historique du gate **avant** exécution. La production n'était pas prête
 | `BACKFILL_ORG_SLUG` | opération (E2) | Non | Optionnelle pour un dry-run | Retirer après usage |
 | `ALLOW_PROMOTE_ADMIN` | opération (promote) | Non | **Doit être absente ou `false`** — admin déjà configuré | N'activer que si la revérification montre l'absence d'admin, puis retirer immédiatement |
 | `PROMOTE_ADMIN_EMAIL` | opération (promote) | Non | Non pertinente par défaut | Retirer après usage |
+| `ALLOW_PLATFORM_CATALOG_CONFIG` | opération (P2 `--apply`) | Non | **Doit être absente ou `false`** | Activer uniquement pour marquer l'org catalogue, puis retirer immédiatement |
+| `PLATFORM_CATALOG_ORG_SLUG` | opération (P2) | Non | Optionnelle (sinon `--org-slug=`) | Retirer après usage |
 
 ### Conclusions vérifiées statiquement
 
@@ -568,6 +570,25 @@ Checklist §E.1 : contrôles exécutés marqués **OK**.
 * Rollback applicatif éventuel : **web puis worker**, vers `ae61df7…`.
 * Migration Skills additive **conservée** ; aucune suppression automatique des tables ou contenus Skills.
 * Restauration de base = dernier recours uniquement (export `2026-08-02T04_05` / PITR).
+
+---
+
+## J. Catalogue pédagogique plateforme (LOT P2) — procédure future
+
+**Ne pas exécuter pendant un lot de développement local.** Ordre obligatoire :
+
+1. Export PostgreSQL.
+2. Déployer le **worker seul** pour appliquer la migration additive `20260804140000_platform_catalog`.
+3. Dry-run : `npm run db:configure-platform-catalog -- --org-slug=<catalog-org-slug>`.
+4. Vérifier que l'organisation choisie contient le catalogue attendu (thèmes, niveaux, exercices, Skills).
+5. Activer temporairement `ALLOW_PLATFORM_CATALOG_CONFIG=true`.
+6. Apply : `npm run db:configure-platform-catalog -- --org-slug=<catalog-org-slug> --apply`.
+7. Relancer le dry-run et vérifier l'idempotence (`alreadyConfigured`).
+8. Retirer ou remettre `ALLOW_PLATFORM_CATALOG_CONFIG=false`.
+9. Déployer le **web** sur le même SHA.
+10. Smoke manager + télépro d'une **seconde** organisation (catalogue visible ; résultats isolés).
+
+**Le nouveau web ne doit pas être basculé avant qu'une organisation catalogue soit configurée.** Contenu pédagogique publié hors org catalogue : signalé par le dry-run, action manuelle ultérieure (jamais de copie auto).
 
 ---
 

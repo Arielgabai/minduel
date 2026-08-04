@@ -127,6 +127,10 @@ function applySelect(
   return out;
 }
 
+vi.mock("@/lib/platformCatalog", () => ({
+  resolvePlatformCatalogOrganizationId: vi.fn(async () => "org1"),
+}));
+
 vi.mock("@/lib/db", () => ({
   prisma: {
     skillCategory: {
@@ -399,7 +403,7 @@ describe("vue article", () => {
     expect(view!.sectionName).toBe("Prix");
   });
 
-  it("null si article masqué, mauvaise catégorie ou hors org", async () => {
+  it("null si article masqué ou mauvaise catégorie ; visible depuis une autre org (catalogue global)", async () => {
     const s = await svc();
     const cat = addCategory({ slug: "cat-pub" });
     const sec = addSection(cat.id);
@@ -426,9 +430,10 @@ describe("vue article", () => {
     expect(
       await s.loadSkillsArticleView(TELEPRO, ORG, "autre-slug", "ok-art"),
     ).toBeNull();
+    // LOT P2 : l'org du télépro n'isole plus le catalogue Skills publié.
     expect(
       await s.loadSkillsArticleView(TELEPRO, OTHER_ORG, "cat-pub", "ok-art"),
-    ).toBeNull();
+    ).not.toBeNull();
     expect(
       await s.loadSkillsArticleView(TELEPRO, ORG, "cat-pub", "ok-art"),
     ).not.toBeNull();
