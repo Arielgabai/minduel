@@ -96,6 +96,14 @@ const rawSchema = z
       .default("medium"),
     // Voix de sortie GA (ex. marin, cedar, alloy…). Modifiable via l'environnement.
     OPENAI_REALTIME_VOICE: z.string().default("marin"),
+    // Seuil server_vad Realtime (WebRTC). Plus élevé = moins de faux déclenchements
+    // en environnement bruyant. Plage [0 ; 1], défaut 0.65. Applicable au web
+    // Realtime uniquement (le worker ne crée pas de sessions Realtime).
+    OPENAI_REALTIME_VAD_THRESHOLD: z
+      .string()
+      .optional()
+      .transform((v) => (v === undefined || v === "" ? 0.65 : Number(v)))
+      .pipe(z.number().min(0).max(1)),
 
     // Pilote de stockage des fichiers audio : "local" (dev) ou "s3" (prod).
     STORAGE_DRIVER: z.enum(["local", "s3"]).default("local"),

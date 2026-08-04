@@ -43,6 +43,13 @@ export const serverConfig = {
     return getServerEnv().SPEAKER_ASSIGNMENT_CONFIDENCE_THRESHOLD;
   },
   /**
+   * Seuil server_vad Realtime (0–1). Validé côté serveur ; transmis au client
+   * uniquement comme nombre pour le `session.update` WebRTC.
+   */
+  get realtimeVadThreshold(): number {
+    return getServerEnv().OPENAI_REALTIME_VAD_THRESHOLD;
+  },
+  /**
    * Paramètres du worker / file : timeouts et politique de retry. Exposés ici
    * pour éviter de propager `getServerEnv()` dans tous les modules métier.
    */

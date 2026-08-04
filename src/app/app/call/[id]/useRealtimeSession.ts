@@ -75,6 +75,8 @@ export function useRealtimeSession({ simulationId, onTurn }: Options) {
   const greetedRef = useRef(false);
   const prospectBufRef = useRef("");
   const eventsRef = useRef<string[]>([]);
+  /** Seuil server_vad validé côté serveur (jamais lu depuis process.env). */
+  const vadThresholdRef = useRef<number | null>(null);
   const onTurnRef = useRef(onTurn);
   onTurnRef.current = onTurn;
 
@@ -115,6 +117,7 @@ export function useRealtimeSession({ simulationId, onTurn }: Options) {
     }
     audioElRef.current = null;
     greetedRef.current = false;
+    vadThresholdRef.current = null;
   }, []);
 
   const send = useCallback((event: Record<string, unknown>) => {
@@ -126,7 +129,13 @@ export function useRealtimeSession({ simulationId, onTurn }: Options) {
     // Speech-to-speech with server-side VAD: OpenAI detects turns and answers
     // automatically (create_response), and lets the user barge in
     // (interrupt_response). We also enable input transcription so we can archive
-    // the agent turns for the history.
+    // the agent turns for the history. Le seuil vient du serveur
+    // (champ vadThreshold de la route realtime), jamais d'une constante client.
+    const vadThreshold = vadThresholdRef.current;
+    if (vadThreshold == null) {
+      dlog("configureSession skipped: vadThreshold missing");
+      return;
+    }
     send({
       type: "session.update",
       session: {
@@ -136,7 +145,7 @@ export function useRealtimeSession({ simulationId, onTurn }: Options) {
             transcription: { model: "whisper-1" },
             turn_detection: {
               type: "server_vad",
-              threshold: 0.5,
+              threshold: vadThreshold,
               prefix_padding_ms: 300,
               silence_duration_ms: 700,
               create_response: true,
@@ -146,7 +155,7 @@ export function useRealtimeSession({ simulationId, onTurn }: Options) {
         },
       },
     });
-  }, [send]);
+  }, [dlog, send]);
 
   const handleEvent = useCallback(
     (evt: { type?: string; [k: string]: unknown }) => {
@@ -222,6 +231,18 @@ export function useRealtimeSession({ simulationId, onTurn }: Options) {
           "Session temps r\u00e9el indisponible (configuration OpenAI manquante).",
         );
       }
+      const vadThreshold = tokenJson?.data?.vadThreshold;
+      if (
+        typeof vadThreshold !== "number" ||
+        !Number.isFinite(vadThreshold) ||
+        vadThreshold < 0 ||
+        vadThreshold > 1
+      ) {
+        throw new Error(
+          "Configuration temps r\u00e9el invalide (seuil VAD).",
+        );
+      }
+      vadThresholdRef.current = vadThreshold;
 
       // 2) Microphone.
       const ms = await navigator.mediaDevices.getUserMedia({

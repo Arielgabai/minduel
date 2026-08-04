@@ -40,7 +40,10 @@ Route : `POST /api/simulations/[id]/realtime` → `OpenAIRealtimeSessionProvider
    le serveur.
 
 Variables d'environnement : `OPENAI_API_KEY` (requise), `OPENAI_REALTIME_MODEL`
-(défaut `gpt-realtime`), `OPENAI_REALTIME_VOICE` (défaut `marin`).
+(défaut `gpt-realtime`), `OPENAI_REALTIME_VOICE` (défaut `marin`),
+`OPENAI_REALTIME_VAD_THRESHOLD` (défaut `0.65`, plage `0`–`1` ; validé côté
+serveur et renvoyé au client comme nombre `vadThreshold` pour le
+`session.update`).
 
 ## Côté navigateur
 
@@ -71,7 +74,7 @@ VAD côté serveur (détection automatique des tours + réponse automatique) :
         "transcription": { "model": "whisper-1" },
         "turn_detection": {
           "type": "server_vad",
-          "threshold": 0.5,
+          "threshold": 0.65,
           "prefix_padding_ms": 300,
           "silence_duration_ms": 700,
           "create_response": true,
