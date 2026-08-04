@@ -9,6 +9,7 @@ import {
   isActiveSimulationStatus,
   isFinishedSimulationStatus,
   isVisibleAssignedScenario,
+  isVisiblePublishedOrgScenario,
   pickRecommendedExercise,
   resolveExerciseCta,
   resolveExerciseMissionStatus,
@@ -116,7 +117,7 @@ describe("teleproMissions ? visibilite", () => {
     ).toBe(false);
   });
 
-  it("4. scenario non assigne invisible", () => {
+  it("4. scenario non assigne: historique assignment invisible, catalogue org visible", () => {
     const s = exercise({ id: "s1", name: "Solo" });
     expect(isVisibleAssignedScenario(s, null, TELEPRO, ORG)).toBe(false);
     expect(
@@ -127,6 +128,10 @@ describe("teleproMissions ? visibilite", () => {
         ORG,
       ),
     ).toBe(false);
+    expect(isVisiblePublishedOrgScenario(s, ORG)).toBe(true);
+    const catalog = buildTeleproMissionsView([s], []);
+    expect(catalog.empty).toBe(false);
+    expect(catalog.totalCount).toBe(1);
   });
 
   it("22. isolation stricte organizationId + teleproId", () => {
@@ -382,7 +387,7 @@ describe("teleproMissions ? recommandation", () => {
     expect(pickRecommendedExercise(view.exercises)).toBeNull();
   });
 
-  it("16. aucune assignation -> etat vide", () => {
+  it("16. catalogue vide sans exercices -> etat vide", () => {
     const view = buildTeleproMissionsView([], []);
     expect(view.empty).toBe(true);
     expect(view.totalCount).toBe(0);
@@ -526,17 +531,18 @@ describe("teleproMissions ? isolation secrets et OpenAI", () => {
     }
   });
 
-  it("service filtre PUBLISHED et select sur champs surs uniquement", () => {
+  it("service filtre PUBLISHED org global et select sur champs surs uniquement", () => {
     const src = read("src/lib/teleproMissionsService.ts");
     expect(src).toContain("ScenarioStatus.PUBLISHED");
     expect(src).toContain("teleproId");
     expect(src).toContain("organizationId");
     expect(src).toContain("SCENARIO_SAFE_SELECT");
+    expect(src).toContain("loadPublishedOrgExercisesAndAttempts");
+    expect(src).not.toMatch(/scenarioAssignment\.findMany/);
     expect(src).not.toContain("secretInfos");
     expect(src).not.toContain("aiProspect");
     expect(src).not.toMatch(/artifacts\s*:/);
     expect(src).not.toMatch(/contentHash\s*:/);
-    // Mentions défensives OK ; aucun select de contenu sensible.
     expect(src).toContain("SCENARIO_SAFE_SELECT");
     expect(src).toContain("jamais artifacts");
     expect(src).toContain('import "server-only"');

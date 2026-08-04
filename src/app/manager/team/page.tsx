@@ -4,22 +4,28 @@ import { requireManager } from "@/lib/auth";
 import { Card, Badge, EmptyState, SectionTitle } from "@/components/ui";
 import { MiniScore } from "@/components/ScoreRing";
 import { Role } from "@/lib/enums";
+import { loadManagerExercisesCatalog } from "@/lib/managerExercisesService";
 import { AddTeleproForm } from "./AddTeleproForm";
 
 export default async function TeamPage() {
   const user = await requireManager();
 
-  const telepros = await prisma.user.findMany({
-    where: { organizationId: user.organizationId, role: Role.TELEPRO },
-    include: {
-      simulations: {
-        where: { status: "COMPLETED" },
-        include: { evaluation: { select: { overallScore: true } } },
+  // Catalogue global : une seule charge pour toute l'équipe (pas de N+1).
+  const [catalog, telepros] = await Promise.all([
+    loadManagerExercisesCatalog(user.organizationId),
+    prisma.user.findMany({
+      where: { organizationId: user.organizationId, role: Role.TELEPRO },
+      include: {
+        simulations: {
+          where: { status: "COMPLETED" },
+          include: { evaluation: { select: { overallScore: true } } },
+        },
       },
-      assignmentsAsTelepro: true,
-    },
-    orderBy: { createdAt: "desc" },
-  });
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
+
+  const availableCount = catalog.totalCount;
 
   return (
     <div className="animate-fade-up">
@@ -33,7 +39,7 @@ export default async function TeamPage() {
             <EmptyState
               icon="👥"
               title="Aucun téléprospecteur"
-              description="Ajoute ton premier téléprospecteur pour lui assigner des entraînements."
+              description="Ajoute ton premier téléprospecteur pour suivre sa progression sur le catalogue publié."
             />
           ) : (
             <div className="space-y-2">
@@ -55,7 +61,10 @@ export default async function TeamPage() {
                           <p className="font-medium text-white">{t.fullName}</p>
                           <p className="text-xs text-white/45">{t.email}</p>
                           <div className="mt-1 flex gap-1">
-                            <Badge tone="gray">{t.assignmentsAsTelepro.length} assigné(s)</Badge>
+                            <Badge tone="gray">
+                              {availableCount} disponible
+                              {availableCount > 1 ? "s" : ""}
+                            </Badge>
                             <Badge tone="violet">{scores.length} tentative(s)</Badge>
                             {!t.isActive && <Badge tone="red">Inactif</Badge>}
                           </div>

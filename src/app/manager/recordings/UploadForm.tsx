@@ -8,10 +8,8 @@ import { formatBytes } from "@/lib/utils";
 type Phase = "idle" | "uploading" | "error";
 
 /**
- * Import minimal : seuls le fichier + le consentement sont requis.
- * Le titre, la campagne et la note sont optionnels. « Utiliser comme appel
- * modèle » (défaut activé) déclenche le pipeline de génération d'exercice.
- * Après l'upload, on redirige vers la fiche (page de progression / validation).
+ * Import historique (LOT O) : plus de création d'exercice depuis un appel.
+ * useAsModel est forcé à false — consultation / analyse uniquement.
  */
 export function UploadForm() {
   const router = useRouter();
@@ -21,7 +19,6 @@ export function UploadForm() {
   const [campaign, setCampaign] = useState("");
   const [managerNote, setManagerNote] = useState("");
   const [consent, setConsent] = useState(false);
-  const [useAsModel, setUseAsModel] = useState(true);
   const [showOptional, setShowOptional] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +42,8 @@ export function UploadForm() {
     if (campaign) fd.append("campaign", campaign);
     if (managerNote) fd.append("managerNote", managerNote);
     fd.append("consent", String(consent));
-    fd.append("useAsModel", String(useAsModel));
+    // LOT O : ne jamais déclencher la génération d'exercice depuis le manager.
+    fd.append("useAsModel", "false");
 
     try {
       const res = await fetch("/api/recordings", { method: "POST", body: fd });
@@ -56,7 +54,6 @@ export function UploadForm() {
         return;
       }
       const id = json.data.id as string;
-      // Redirige vers la fiche : la progression y est suivie en direct.
       router.push(`/manager/recordings/${id}`);
     } catch {
       setPhase("error");
@@ -102,22 +99,6 @@ export function UploadForm() {
           />
         </div>
 
-        {/* Utiliser comme appel modèle */}
-        <label className="flex items-start gap-2 rounded-lg border border-violet-500/20 bg-violet-500/5 p-3 text-xs text-white/70">
-          <input
-            type="checkbox"
-            checked={useAsModel}
-            onChange={(e) => setUseAsModel(e.target.checked)}
-            className="mt-0.5"
-          />
-          <span>
-            <span className="font-medium text-white/85">Créer un exercice depuis cet appel</span>
-            <br />
-            Transcription, anonymisation et génération d&apos;un scénario d&apos;entraînement équivalent.
-          </span>
-        </label>
-
-        {/* Consentement obligatoire */}
         <label className="flex items-start gap-2 rounded-lg border border-white/10 bg-white/5 p-3 text-xs text-white/60">
           <input
             type="checkbox"
@@ -126,8 +107,8 @@ export function UploadForm() {
             className="mt-0.5"
           />
           <span>
-            Je confirme que mon organisation a le droit de traiter cet enregistrement
-            (base légale / consentement).
+            Je confirme que mon organisation a le droit de traiter cet
+            enregistrement (base légale / consentement).
           </span>
         </label>
 
@@ -136,20 +117,38 @@ export function UploadForm() {
           onClick={() => setShowOptional((v) => !v)}
           className="text-xs text-white/45 hover:text-white/70"
         >
-          {showOptional ? "− Masquer les champs optionnels" : "+ Champs optionnels (titre, campagne, note)"}
+          {showOptional
+            ? "− Masquer les champs optionnels"
+            : "+ Champs optionnels (titre, campagne, note)"}
         </button>
         {showOptional && (
           <div className="space-y-2">
-            <input value={title} onChange={(e) => setTitle(e.target.value)} className={field} placeholder="Titre (auto depuis le fichier si vide)" />
-            <input value={campaign} onChange={(e) => setCampaign(e.target.value)} className={field} placeholder="Campagne" />
-            <textarea value={managerNote} onChange={(e) => setManagerNote(e.target.value)} className={field} placeholder="Note du manager" rows={2} />
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className={field}
+              placeholder="Titre (auto depuis le fichier si vide)"
+            />
+            <input
+              value={campaign}
+              onChange={(e) => setCampaign(e.target.value)}
+              className={field}
+              placeholder="Campagne"
+            />
+            <textarea
+              value={managerNote}
+              onChange={(e) => setManagerNote(e.target.value)}
+              className={field}
+              placeholder="Note du manager"
+              rows={2}
+            />
           </div>
         )}
 
         {error && <p className="text-sm text-red-300">{error}</p>}
 
         <Button type="submit" disabled={phase === "uploading"} className="w-full">
-          {phase === "uploading" ? "Envoi…" : useAsModel ? "Importer et générer l'exercice" : "Importer l'appel"}
+          {phase === "uploading" ? "Envoi…" : "Importer l'appel"}
         </Button>
       </form>
     </Card>

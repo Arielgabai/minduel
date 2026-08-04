@@ -207,6 +207,15 @@ export function isVisibleAssignedScenario(
   return scenario.status === ScenarioStatus.PUBLISHED;
 }
 
+/** LOT O: org + PUBLISHED only (no ScenarioAssignment). */
+export function isVisiblePublishedOrgScenario(
+  scenario: { status: string; organizationId: string },
+  organizationId: string,
+): boolean {
+  if (scenario.organizationId !== organizationId) return false;
+  return scenario.status === ScenarioStatus.PUBLISHED;
+}
+
 export function filterVisibleAssignments(
   rows: MissionAssignmentInput[],
   teleproId: string,

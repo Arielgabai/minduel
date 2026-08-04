@@ -36,10 +36,11 @@ export async function POST(req: Request) {
       return fail(404, "Scénario introuvable ou non publié.");
     }
 
+    // LOT O : catalogue global — l'accès ne dépend plus de ScenarioAssignment.
+    // Mise à jour best-effort si une ligne historique existe encore.
     const assignment = await prisma.scenarioAssignment.findFirst({
       where: { scenarioId, teleproId: user.id },
     });
-    if (!assignment) return fail(403, "Ce scénario ne t'est pas assigné.");
 
     if (!scenario.publishedPromptBundleId) {
       return fail(409, "Aucun bundle de prompts publié pour ce scénario.");
@@ -99,7 +100,7 @@ export async function POST(req: Request) {
       },
     });
 
-    if (assignment.status === "ASSIGNED") {
+    if (assignment?.status === "ASSIGNED") {
       await prisma.scenarioAssignment.update({
         where: { id: assignment.id },
         data: { status: "IN_PROGRESS" },

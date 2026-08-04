@@ -44,8 +44,8 @@ export default async function RecordingDetail({
 
   const header = (
     <>
-      <Link href="/manager/recordings" className="text-sm text-white/50 hover:text-white/80">
-        ← Appels modèles
+      <Link href="/manager/results" className="text-sm text-white/50 hover:text-white/80">
+        ← Résultats
       </Link>
       <div className="mt-2 mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -108,18 +108,6 @@ export default async function RecordingDetail({
         };
       }
 
-      const [telepros, assignments] = await Promise.all([
-        prisma.user.findMany({
-          where: { organizationId: manager.organizationId, role: "TELEPRO", isActive: true },
-          select: { id: true, fullName: true, email: true },
-          orderBy: { fullName: "asc" },
-        }),
-        prisma.scenarioAssignment.findMany({
-          where: { scenarioId: s.id },
-          select: { teleproId: true },
-        }),
-      ]);
-
       const data: ReviewData = {
         scenario: {
           id: s.id,
@@ -140,7 +128,6 @@ export default async function RecordingDetail({
           expectedNextSteps: parseJson<string[]>(s.expectedNextSteps, []),
           targetSkills: parseJson<string[]>(s.targetSkills, []),
           coachingReference: parseJson<string[]>(s.coachingReference, []),
-          aiProspect: parseJson<ReviewData["scenario"]["aiProspect"]>(s.aiProspect, null),
         },
         analysis: analysisRow
           ? {
@@ -158,8 +145,6 @@ export default async function RecordingDetail({
           : null,
         segmentsByIdx,
         rubric: s.rubric ? parseJson<ReviewData["rubric"]>(s.rubric.criteria, []) : [],
-        telepros,
-        assigned: assignments.map((a) => a.teleproId),
       };
 
       return (

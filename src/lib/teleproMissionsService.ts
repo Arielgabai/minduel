@@ -113,7 +113,12 @@ function toCatalogExerciseInput(row: {
   return isReadyCatalogExercise(exercise) ? exercise : null;
 }
 
-async function loadAssignedExercisesAndAttempts(
+/**
+ * Catalogue org global (LOT O) : tous les exercices PUBLISHED prêts de
+ * l'organisation, sans dépendre de ScenarioAssignment.
+ * Les tentatives restent personnelles (teleproId) pour progression / verrous.
+ */
+async function loadPublishedOrgExercisesAndAttempts(
   teleproId: string,
   organizationId: string,
   options?: { forCatalog?: boolean },
@@ -122,28 +127,20 @@ async function loadAssignedExercisesAndAttempts(
   attempts: MissionAttemptInput[];
 }> {
   const forCatalog = options?.forCatalog === true;
-  const assignments = await prisma.scenarioAssignment.findMany({
+  const rows = await prisma.scenario.findMany({
     where: {
-      teleproId,
       organizationId,
-      scenario: {
-        status: ScenarioStatus.PUBLISHED,
-        organizationId,
-      },
+      status: ScenarioStatus.PUBLISHED,
     },
-    select: {
-      scenario: {
-        select: forCatalog ? SCENARIO_CATALOG_SELECT : SCENARIO_SAFE_SELECT,
-      },
-    },
+    select: forCatalog ? SCENARIO_CATALOG_SELECT : SCENARIO_SAFE_SELECT,
   });
 
   let exercises: MissionExerciseInput[];
   if (forCatalog) {
     exercises = [];
-    for (const a of assignments) {
+    for (const row of rows) {
       const mapped = toCatalogExerciseInput(
-        a.scenario as {
+        row as {
           id: string;
           name: string;
           missionLevel: number;
@@ -164,7 +161,22 @@ async function loadAssignedExercisesAndAttempts(
       if (mapped) exercises.push(mapped);
     }
   } else {
-    exercises = assignments.map((a) => a.scenario);
+    exercises = rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      missionLevel: row.missionLevel,
+      sortOrder: row.sortOrder,
+      level: row.level,
+      objective: row.objective,
+      prospectProfile: row.prospectProfile,
+      personality: row.personality,
+      successConditions: row.successConditions,
+      targetDurationSec: row.targetDurationSec,
+      status: row.status,
+      organizationId: row.organizationId,
+      missionStageId: row.missionStageId,
+      prospectAvatarKey: row.prospectAvatarKey,
+    }));
   }
   const scenarioIds = exercises.map((e) => e.id);
 
@@ -225,13 +237,14 @@ async function loadPublishedCatalogMeta(
 
 /**
  * Charge le modèle de vue missions plat (compat lot I).
- * Filtre : organizationId + teleproId + Scenario.status PUBLISHED.
+ * Filtre : organizationId + Scenario.status PUBLISHED (catalogue global LOT O).
+ * Progression / tentatives toujours scoped teleproId.
  */
 export async function loadTeleproMissionsView(
   teleproId: string,
   organizationId: string,
 ): Promise<TeleproMissionsView> {
-  const { exercises, attempts } = await loadAssignedExercisesAndAttempts(
+  const { exercises, attempts } = await loadPublishedOrgExercisesAndAttempts(
     teleproId,
     organizationId,
   );
@@ -240,7 +253,8 @@ export async function loadTeleproMissionsView(
 
 /**
  * Catalogue Thème → Niveau → Exercice pour le téléprospecteur.
- * Isolation stricte org + télépro + PUBLISHED ; thèmes/niveaux DRAFT/ARCHIVED exclus.
+ * Catalogue global org : PUBLISHED prêts ; thèmes/niveaux DRAFT/ARCHIVED exclus.
+ * Verrouillage progressif personnel via tentatives (teleproId).
  * Exercices incomplets (avatar, personnalité, prompt publié) exclus avant le build.
  */
 export async function loadTeleproMissionsCatalogView(
@@ -248,7 +262,7 @@ export async function loadTeleproMissionsCatalogView(
   organizationId: string,
 ): Promise<TeleproMissionsCatalogView> {
   const [{ exercises, attempts }, { themes, stages }] = await Promise.all([
-    loadAssignedExercisesAndAttempts(teleproId, organizationId, {
+    loadPublishedOrgExercisesAndAttempts(teleproId, organizationId, {
       forCatalog: true,
     }),
     loadPublishedCatalogMeta(organizationId),
