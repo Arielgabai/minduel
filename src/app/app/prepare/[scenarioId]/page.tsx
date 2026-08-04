@@ -25,11 +25,8 @@ export default async function PreparePage({
   });
   if (!scenario) notFound();
 
-  // Vérifier l'assignation (isolation : un télépro ne prépare que ses scénarios).
-  const assignment = await prisma.scenarioAssignment.findFirst({
-    where: { scenarioId, teleproId: user.id },
-  });
-  if (!assignment) notFound();
+  // LOT O : catalogue global org — plus de garde ScenarioAssignment.
+  void user.id;
 
   return (
     <div className="animate-fade-up">

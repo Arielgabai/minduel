@@ -68,7 +68,7 @@ export default async function MissionThemePage({
       {theme.stages.length === 0 ? (
         <EmptyState
           title="Aucun niveau disponible"
-          description="Aucun niveau publié n'est encore assigné dans ce thème."
+          description="Aucun niveau publié n'est encore disponible dans ce thème."
         />
       ) : (
         <MissionsPath theme={theme} />

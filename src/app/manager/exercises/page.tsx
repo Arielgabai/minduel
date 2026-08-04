@@ -1,15 +1,8 @@
 import Link from "next/link";
-import { requireTelepro } from "@/lib/auth";
+import { requireManager } from "@/lib/auth";
 import { EmptyState } from "@/components/ui";
-import {
-  loadTeleproMissionsCatalogView,
-  loadTeleproMissionsView,
-} from "@/lib/teleproMissionsService";
-
-// Le loader plat reste exporté/référencé pour compatibilité des tests et outils.
-void loadTeleproMissionsView;
-import { missionProgressPct } from "@/lib/missionsPath";
-import type { TeleproMissionThemeView } from "@/lib/teleproMissions";
+import { loadManagerExercisesCatalog } from "@/lib/managerExercisesService";
+import type { ManagerExerciseThemeView } from "@/lib/managerExercisesView";
 
 const ICON_GLYPH: Record<string, string> = {
   target: "◎",
@@ -22,24 +15,21 @@ const ICON_GLYPH: Record<string, string> = {
   trophy: "♛",
 };
 
-export default async function MissionsPage() {
-  const user = await requireTelepro();
-  const catalog = await loadTeleproMissionsCatalogView(
-    user.id,
-    user.organizationId,
-  );
+export default async function ManagerExercisesPage() {
+  const manager = await requireManager();
+  const catalog = await loadManagerExercisesCatalog(manager.organizationId);
 
   if (catalog.empty) {
     return (
       <div className="animate-fade-up">
-        <h1 className="mb-1 text-2xl font-bold">Missions</h1>
+        <h1 className="mb-1 text-2xl font-bold">Exercices</h1>
         <p className="mb-6 text-sm text-white/50">
-          Choisis un thème pour progresser niveau par niveau.
+          Vue d&apos;ensemble du catalogue publié de l&apos;organisation.
         </p>
         <EmptyState
-          icon="🎯"
-          title="Aucune mission disponible"
-          description="Les exercices publiés de ton organisation apparaîtront ici."
+          icon="🎭"
+          title="Aucun exercice publié"
+          description="Les exercices publiés par l'administration apparaîtront ici."
         />
       </div>
     );
@@ -48,15 +38,14 @@ export default async function MissionsPage() {
   return (
     <div className="animate-fade-up">
       <header className="mb-6">
-        <h1 className="text-2xl font-bold">Missions</h1>
+        <h1 className="text-2xl font-bold">Exercices</h1>
         <p className="mt-1 text-sm text-white/50">
-          Thèmes → niveaux. Progression réelle sur le catalogue publié.
+          Tous les thèmes et niveaux publiés — lecture seule, sans verrouillage.
         </p>
-        {catalog.allCompleted ? (
-          <p className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-            Bravo — tous tes exercices disponibles sont terminés.
-          </p>
-        ) : null}
+        <p className="mt-2 text-xs text-white/40">
+          {catalog.totalCount} exercice{catalog.totalCount > 1 ? "s" : ""} publié
+          {catalog.totalCount > 1 ? "s" : ""}
+        </p>
       </header>
 
       <ul className="space-y-4">
@@ -70,8 +59,7 @@ export default async function MissionsPage() {
   );
 }
 
-function ThemeCard({ theme }: { theme: TeleproMissionThemeView }) {
-  const pct = missionProgressPct(theme.completedCount, theme.exerciseCount);
+function ThemeCard({ theme }: { theme: ManagerExerciseThemeView }) {
   const glyph = ICON_GLYPH[theme.iconKey] ?? ICON_GLYPH.target;
 
   return (
@@ -90,28 +78,14 @@ function ThemeCard({ theme }: { theme: TeleproMissionThemeView }) {
           ) : null}
           <p className="mt-2 text-xs text-white/45">
             {theme.stageCount} niveau{theme.stageCount > 1 ? "x" : ""} ·{" "}
-            {theme.exerciseCount} exercice{theme.exerciseCount > 1 ? "s" : ""} ·{" "}
-            {theme.completedCount} terminé{theme.completedCount > 1 ? "s" : ""}
+            {theme.exerciseCount} exercice
+            {theme.exerciseCount > 1 ? "s" : ""}
           </p>
         </div>
       </div>
 
-      <div
-        className="mt-4 h-2 w-full overflow-hidden rounded-full bg-white/10"
-        role="progressbar"
-        aria-valuenow={pct}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-label={`Progression du thème ${theme.name}`}
-      >
-        <div
-          className="h-full rounded-full bg-gradient-to-r from-electric-500 via-violet-500 to-flame-500"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-
       <Link
-        href={`/app/missions/${theme.slug}`}
+        href={`/manager/exercises/${theme.slug}`}
         className="mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-gradient-to-r from-electric-500 to-violet-500 px-4 text-sm font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-electric-400"
       >
         Voir les niveaux

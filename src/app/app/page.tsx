@@ -42,8 +42,8 @@ export default async function TeleproHome() {
         <SectionTitle className="mb-3">Ta progression</SectionTitle>
         {catalog.empty ? (
           <EmptyState
-            title="Aucune mission assignée"
-            description="Ton manager va bientôt t'attribuer des entraînements."
+            title="Aucune mission disponible"
+            description="Les exercices publiés de ton organisation apparaîtront ici."
           />
         ) : (
           <Card>
@@ -121,7 +121,7 @@ export default async function TeleproHome() {
             </Card>
           ) : catalog.allCompleted ? (
             <Card className="text-sm text-white/60">
-              Aucune recommandation : tous tes exercices assignés sont terminés.
+              Aucune recommandation : tous tes exercices disponibles sont terminés.
               Retrouve-les dans Missions pour les refaire.
             </Card>
           ) : (

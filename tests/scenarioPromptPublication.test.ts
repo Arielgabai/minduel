@@ -1060,15 +1060,14 @@ describe("UI manager — gestion erreurs publication (assertions source)", () =>
     );
   });
 
-  it("RecordingReview.publish verifie res.ok et affiche error", () => {
+  it("RecordingReview LOT O lecture seule sans publish/assign", () => {
     const src = readFileSync(
       path.resolve("src/app/manager/recordings/[id]/RecordingReview.tsx"),
       "utf8",
     );
-    expect(src).toContain("async function publish");
-    expect(src).toContain("if (!res.ok)");
-    expect(src).toContain("setError");
-    expect(src).toContain('role="alert"');
-    expect(src).toMatch(/if\s*\(\s*!res\.ok\s*\)[\s\S]*?return;/);
+    expect(src).not.toContain("async function publish");
+    expect(src).not.toContain("AssignPanel");
+    expect(src).not.toContain("Valider et publier");
+    expect(src).toContain("Consultation historique");
   });
 });

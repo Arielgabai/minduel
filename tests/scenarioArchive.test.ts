@@ -660,117 +660,53 @@ describe("PATCH manager — blocage ARCHIVED", () => {
   });
 });
 
-describe("POST assign — ARCHIVED", () => {
-  it("ARCHIVED → 409, aucune assignation créée/modifiée", async () => {
-    seedScenario(ScenarioStatus.ARCHIVED);
-    const before = assignments.length;
-    const res = await assignScenario(SCENARIO_ID, [TELEPRO_ID]);
-    expect(res.status).toBe(409);
-    expect(assignments).toHaveLength(before);
-  });
-
-  it("DRAFT non PUBLISHED → 400 inchangé", async () => {
-    seedScenario(ScenarioStatus.DRAFT);
-    const res = await assignScenario(SCENARIO_ID, [TELEPRO_ID]);
-    expect(res.status).toBe(400);
-    expect(assignments).toHaveLength(0);
+describe("POST assign LOT O deprecie (410)", () => {
+  it("toute tentative -> 410, aucune ecriture", async () => {
+    for (const status of [
+      ScenarioStatus.ARCHIVED,
+      ScenarioStatus.DRAFT,
+      ScenarioStatus.PUBLISHED,
+    ]) {
+      assignments = [];
+      seedScenario(status);
+      const res = await assignScenario(SCENARIO_ID, [TELEPRO_ID]);
+      expect(res.status).toBe(410);
+      const body = await res.json();
+      expect(body.error.message).toMatch(/affectation individuelle/i);
+      expect(assignments).toHaveLength(0);
+    }
   });
 });
 
-describe("Accueil télépro — filtre Prisma PUBLISHED", () => {
-  it("findMany assignments filtre scenario.status = PUBLISHED (pas un filter JS)", async () => {
-    seedScenario(ScenarioStatus.PUBLISHED);
-    assignments = [
-      {
-        id: "asg-pub",
-        organizationId: ORG,
-        scenarioId: SCENARIO_ID,
-        teleproId: TELEPRO_ID,
-        managerId: MANAGER_ID,
-        status: "ASSIGNED",
-        createdAt: "2026-01-01T00:00:00.000Z",
-      },
-    ];
-
+describe("Accueil telepro catalogue org PUBLISHED (LOT O)", () => {
+  it("service charge scenario.findMany PUBLISHED sans ScenarioAssignment", () => {
     const serviceSrc = readFileSync(
       path.resolve("src/lib/teleproMissionsService.ts"),
       "utf8",
     );
-    const pageSrc = readFileSync(
-      path.resolve("src/app/app/page.tsx"),
-      "utf8",
-    );
-    // Filtre relationnel Prisma dans le service partagé — pas un .filter JS post-chargement.
-    expect(serviceSrc).toContain("ScenarioStatus.PUBLISHED");
+    const pageSrc = readFileSync(path.resolve("src/app/app/page.tsx"), "utf8");
+    expect(serviceSrc).toContain("loadPublishedOrgExercisesAndAttempts");
+    expect(serviceSrc).toMatch(/prisma\.scenario\.findMany/);
     expect(serviceSrc).toMatch(/status:\s*ScenarioStatus\.PUBLISHED/);
-    expect(serviceSrc).not.toMatch(
-      /assignments\.filter\([^)]*ARCHIVED/,
-    );
-    expect(serviceSrc).not.toMatch(
-      /\.filter\(\s*\(?a\)?\s*=>\s*a\.scenario\.status/,
-    );
-    expect(pageSrc).toContain("loadTeleproMissionsView");
-    expect(pageSrc).not.toMatch(
-      /assignments\.filter\([^)]*ARCHIVED/,
-    );
-
-    const { prisma } = await import("@/lib/db");
-    await prisma.scenarioAssignment.findMany({
-      where: {
-        teleproId: TELEPRO_ID,
-        organizationId: ORG,
-        scenario: {
-          status: ScenarioStatus.PUBLISHED,
-          organizationId: ORG,
-        },
-      },
-      select: {
-        scenario: {
-          select: {
-            id: true,
-            name: true,
-            status: true,
-            organizationId: true,
-          },
-        },
-      },
-    });
-    expect(lastAssignmentFindManyArgs).toMatchObject({
-      where: {
-        teleproId: TELEPRO_ID,
-        organizationId: ORG,
-        scenario: {
-          status: ScenarioStatus.PUBLISHED,
-          organizationId: ORG,
-        },
-      },
-    });
+    expect(serviceSrc).not.toMatch(/scenarioAssignment\.findMany/);
+    expect(pageSrc).toContain("loadTeleproMissionsCatalogView");
   });
 });
 
-describe("UI manager — archive", () => {
-  it("texte Archiver, contrôle res.ok, badge ARCHIVED, détail archivé sans actions", () => {
+describe("UI manager LOT O redirects scenarios", () => {
+  it("pages scenarios redirigent, plus de ScenarioForm/AssignPanel", () => {
     const actionsSrc = readFileSync(
       path.resolve("src/app/manager/scenarios/[id]/ScenarioActions.tsx"),
       "utf8",
     );
     expect(actionsSrc).toContain("Archiver");
-    expect(actionsSrc).toContain("Confirmer l&apos;archivage");
-    expect(actionsSrc).toContain("historique sera conservé");
     expect(actionsSrc).toMatch(/if\s*\(\s*!res\.ok\s*\)/);
-    expect(actionsSrc).toContain("allowArchive");
-    expect(actionsSrc).not.toMatch(/>\s*Supprimer\s*</);
 
     const listSrc = readFileSync(
       path.resolve("src/app/manager/scenarios/page.tsx"),
       "utf8",
     );
-    expect(listSrc).toContain("Archivé");
-    expect(listSrc).toContain("ScenarioStatus.ARCHIVED");
-    // Ne jamais afficher ARCHIVED comme Brouillon
-    expect(listSrc).toMatch(
-      /ARCHIVED[\s\S]*\?[\s\S]*["']Archivé["'][\s\S]*:[\s\S]*PUBLISHED/,
-    );
+    expect(listSrc).toContain('redirect("/manager/exercises")');
 
     const detailSrc = normalizeEol(
       readFileSync(
@@ -778,17 +714,11 @@ describe("UI manager — archive", () => {
         "utf8",
       ),
     );
-    expect(detailSrc).toContain("Archivé");
-    expect(detailSrc).toContain("isArchived");
-    expect(detailSrc).toMatch(/if\s*\(\s*isArchived\s*\)/);
-    const archivedBranch = detailSrc.match(
-      /if \(isArchived\) \{([\s\S]*?)\n  \}\n\n  return \(/,
-    );
-    expect(archivedBranch?.[1]).toBeTruthy();
-    expect(archivedBranch![1]).not.toContain("ScenarioForm");
-    expect(archivedBranch![1]).not.toContain("AssignPanel");
-    expect(archivedBranch![1]).not.toContain("ScenarioActions");
-    expect(archivedBranch![1]).toContain("Archivé");
+    expect(detailSrc).toContain("redirect");
+    expect(detailSrc).toContain("/manager/exercises/detail/");
+    expect(detailSrc).not.toContain("ScenarioForm");
+    expect(detailSrc).not.toContain("AssignPanel");
+    expect(detailSrc).not.toContain("ScenarioActions");
   });
 });
 

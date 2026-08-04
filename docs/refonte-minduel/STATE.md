@@ -771,3 +771,48 @@ Toutes les routes API sont protégées par `requirePlatformAdmin`. Enveloppes `{
 - **Aucun** appel OpenAI / réseau externe / simulation / micro / WebRTC.
 - **Aucun** commit / push / PR.
 - **Aucune** affirmation que la migration N4 a été appliquée en production.
+
+## Lot O — Catalogue global télépro + simplification manager (04/08/2026)
+
+**Objectif unique :** catalogue PUBLISHED global par organisation pour les télépros ; manager en lecture seule (Exercices / Équipe / Résultats) ; plus d'affectation individuelle ni de création d'exercice depuis un appel.
+
+### Livré
+
+- **Catalogue télépro global :** `loadPublishedOrgExercisesAndAttempts` charge les exercices `PUBLISHED` prêts de l'organisation (thème/niveau PUBLISHED, readiness N4) **sans** `ScenarioAssignment`. Progression / verrous restent personnels via les tentatives (`teleproId`).
+- **Skills :** déjà globaux org + PUBLISHED (aucun filtre d'affectation) — tests de non-régression uniquement.
+- **Navigation manager :** Exercices, Équipe, Résultats (+ Admin si `PLATFORM_ADMIN`). Retrait Appels modèles / Scénarios / Connaissances.
+- **Vue manager Exercices :** `/manager/exercises` (+ thème + fiche détail lecture seule) via `managerExercisesService` / `managerExercisesView` — tous les niveaux visibles, aucun verrou, aucun CTA simulation, aucun prompt/artifact/hash/secret.
+- **Anciennes routes :** `/manager`, `/manager/scenarios*`, `/manager/knowledge`, `/manager/recordings` → redirect catalogue ; `/manager/recordings/[id]` historique conservé en lecture seule.
+- **Assign API :** `POST /api/scenarios/[id]/assign` → **410** (message explicite) ; aucune écriture.
+- **Création depuis appel :** option / bouton / handlers retirés (`UploadForm` force `useAsModel=false` ; `RecordingReview` sans publish/assign).
+- **Prepare / simulations :** plus de garde d'assignation obligatoire (catalogue global).
+
+### Vérifications locales
+
+| Contrôle | Résultat |
+|---|---|
+| Batterie ciblée LOT O | OK — **68** tests / 4 fichiers (~9 s) |
+| `npm test` | OK — **525** tests / **30** fichiers (~22 s) |
+| `npx tsc --noEmit` | OK (exit 0) |
+| `npm run lint --if-present` | OK — No ESLint warnings or errors |
+| `npx prisma validate` | OK — schéma valide |
+| `npm run build` | OK — routes `/manager/exercises` (+ thème + détail) générées |
+| `git diff --check` | OK (warnings LF/CRLF autocrlf uniquement ; blank EOF corrigé) |
+| Prisma / migrations / package / lockfile | **Inchangés** |
+
+### Confirmations
+
+- **Aucune** migration / base / seed / backfill / OpenAI / réseau / simulation / micro.
+- **Aucun** commit / push.
+- **Aucune** affirmation de déploiement en production.
+- Table `ScenarioAssignment` **conservée** (historique) ; plus utilisée pour la visibilité télépro.
+
+## Lot O-FIX — KPI Équipe sans ScenarioAssignment (04/08/2026)
+
+**Objectif :** remplacer les compteurs « assignés » de la page Équipe par le total catalogue global PUBLISHED prêt (commun à tous les télépros), sans N+1 ni écriture d'affectations.
+
+**Livré :** `loadManagerExercisesCatalog` chargé une fois sur liste et détail ; badge/libellés « disponible(s) » / « Exercices disponibles » ; tentatives individuelles conservées ; `flattenManagerCatalogExercises` ; tests O-FIX dans `tests/lotO.test.ts`.
+
+**Vérifications :** `tests/lotO.test.ts` OK (17) ; suite `npm test` OK — **528** / 528 (30 fichiers) ; `tsc` / lint / prisma / build OK ; prisma/package inchangés.
+
+**Confirmations :** aucune migration / base / seed / OpenAI / commit ; `ScenarioAssignment` ignoré dans les KPI manager visibles.
