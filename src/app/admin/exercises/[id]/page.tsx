@@ -78,6 +78,7 @@ export default function AdminExerciseDetailPage() {
     level: "MOYEN",
     missionLevel: 1,
     sortOrder: 0,
+    passingScore: 60,
     callType: "VENTE",
     campaign: "",
     offer: "",
@@ -557,6 +558,27 @@ export default function AdminExerciseDetailPage() {
           <label className={labelCls}>
             Ordre
             <input type="number" min={0} max={999} className={fieldCls} disabled={archived || busy} value={meta.sortOrder} onChange={(e) => setMeta({ ...meta, sortOrder: Number(e.target.value) })} />
+          </label>
+          <label className={labelCls}>
+            Score minimum de validation
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                className={fieldCls}
+                disabled={archived || busy}
+                value={meta.passingScore}
+                onChange={(e) =>
+                  setMeta({ ...meta, passingScore: Number(e.target.value) })
+                }
+              />
+              <span className="shrink-0 text-sm text-white/50">/100</span>
+            </div>
+            <p className="mt-1 text-xs text-white/45">
+              Le niveau suivant se débloque lorsque le télépro atteint ce score.
+            </p>
           </label>
           <label className={labelCls}>
             Campagne

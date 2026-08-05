@@ -278,7 +278,14 @@ describe("lot N2 — catalogue Thème → Niveau → Exercice", () => {
         exercise({ id: "b1", name: "B1", missionStageId: "sb1" }),
         exercise({ id: "b3", name: "B3", missionStageId: "sb3" }),
       ],
-      [attempt({ id: "sim", scenarioId: "a1", status: SimulationStatus.COMPLETED })],
+      [
+        attempt({
+          id: "sim",
+          scenarioId: "a1",
+          status: SimulationStatus.COMPLETED,
+          evaluation: { overallScore: 80, summary: null, outcome: null },
+        }),
+      ],
       [
         theme({ id: "ta", slug: "a", name: "A", sortOrder: 1 }),
         theme({ id: "tb", slug: "b", name: "B", sortOrder: 2 }),
@@ -328,6 +335,7 @@ describe("lot N2 — catalogue Thème → Niveau → Exercice", () => {
           id: "sim-done",
           scenarioId: "e2",
           status: SimulationStatus.COMPLETED,
+          evaluation: { overallScore: 80, summary: null, outcome: null },
         }),
         attempt({
           id: "sim-active",
@@ -356,7 +364,7 @@ describe("lot N2 — catalogue Thème → Niveau → Exercice", () => {
     const e1 = catalog.themes[0]!.stages[0]!.exercises[0]!;
     const e2 = catalog.themes[0]!.stages[1]!.exercises[0]!;
     expect(e1.status).toBe(ExerciseMissionStatus.IN_PROGRESS);
-    expect(e2.status).toBe(ExerciseMissionStatus.COMPLETED);
+    expect(e2.status).toBe(ExerciseMissionStatus.PASSED);
     expect(catalog.recommended?.id).toBe("e1");
     expect(e1.recommended).toBe(true);
     expect(e1.ctaHref).toContain("/app/call/");
@@ -705,6 +713,7 @@ describe("lot N2 — service et pages", () => {
     const pathSrc = read("src/app/app/missions/MissionsPath.tsx");
     expect(pathSrc).toContain("ProspectAvatar");
     expect(pathSrc).toContain("prepareHref");
-    expect(pathSrc).toMatch(/\/prepare\//);
+    // Q2 : le clic suit le CTA du moteur (reprise/analyse/preparation), pas prepareHref seul.
+    expect(pathSrc).toContain("exercise.ctaHref");
   });
 });

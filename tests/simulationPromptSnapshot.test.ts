@@ -125,6 +125,31 @@ vi.mock("@/lib/platformCatalog", () => ({
   resolvePlatformCatalogOrganizationId: vi.fn(async () => ORG),
 }));
 
+// LOT Q2 : le gate pédagogique charge le catalogue missions (hors périmètre
+ // de ce fichier). On autorise par défaut ; le verrouillage est couvert par lotQ2.
+vi.mock("@/lib/missionAccess", () => ({
+  LOCKED_LEVEL_MESSAGE:
+    "Niveau verrouillé : atteins le score requis au niveau précédent.",
+  resolveTeleproScenarioStartAccess: vi.fn(async () => ({
+    allowed: true as const,
+    node: {
+      id: "mock",
+      name: "mock",
+      status: "AVAILABLE",
+      prepareHref: "/app/prepare/mock",
+      debriefHref: null,
+      ctaHref: "/app/prepare/mock",
+      ctaLabel: "Commencer",
+      passingScore: 60,
+      bestScore: null,
+      latestEvaluatedScore: null,
+      latestEvaluatedSimulationId: null,
+      isPassed: false,
+      lockMessage: null,
+    },
+  })),
+}));
+
 vi.mock("@/lib/config", () => ({
   isDemoMode: vi.fn(() => true),
   serverConfig: {

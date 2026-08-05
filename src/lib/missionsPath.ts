@@ -1,5 +1,5 @@
 /**
- * Helpers purs de présentation du parcours Missions (lots L / N2).
+ * Helpers purs de présentation du parcours Missions (lots L / N2 / Q2).
  * Aucune règle métier dupliquée : les statuts, l'ordre, le déblocage et la
  * recommandation restent calculés par le moteur (`teleproMissions`).
  */
@@ -13,6 +13,8 @@ import type {
 export type MissionNodeVariant =
   | "completed"
   | "current"
+  | "retry"
+  | "pending"
   | "available"
   | "locked";
 
@@ -31,10 +33,14 @@ export function missionNodeVariant(
   status: MissionExerciseView["status"] | TeleproMissionExerciseNode["status"],
 ): MissionNodeVariant {
   switch (status) {
-    case ExerciseMissionStatus.COMPLETED:
+    case ExerciseMissionStatus.PASSED:
       return "completed";
     case ExerciseMissionStatus.IN_PROGRESS:
       return "current";
+    case ExerciseMissionStatus.ANALYSIS_PENDING:
+      return "pending";
+    case ExerciseMissionStatus.TO_RETRY:
+      return "retry";
     case ExerciseMissionStatus.AVAILABLE:
       return "available";
     default:

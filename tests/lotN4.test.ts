@@ -639,7 +639,14 @@ describe("lot N4 — catalogue telepro dynamique", () => {
         readyExercise({ id: "e1", name: "E1", missionStageId: "s1" }),
         readyExercise({ id: "e3", name: "E3", missionStageId: "s3" }),
       ],
-      [attempt({ id: "sim", scenarioId: "e1", status: SimulationStatus.COMPLETED })],
+      [
+        attempt({
+          id: "sim",
+          scenarioId: "e1",
+          status: SimulationStatus.COMPLETED,
+          evaluation: { overallScore: 80, summary: null, outcome: null },
+        }),
+      ],
       [theme({ id: "t1", slug: "t", name: "T" })],
       [
         stage({
@@ -672,7 +679,14 @@ describe("lot N4 — catalogue telepro dynamique", () => {
         readyExercise({ id: "b1", name: "B1", missionStageId: "sb1" }),
         readyExercise({ id: "b2", name: "B2", missionStageId: "sb2" }),
       ],
-      [attempt({ id: "sim", scenarioId: "a1", status: SimulationStatus.COMPLETED })],
+      [
+        attempt({
+          id: "sim",
+          scenarioId: "a1",
+          status: SimulationStatus.COMPLETED,
+          evaluation: { overallScore: 80, summary: null, outcome: null },
+        }),
+      ],
       [
         theme({ id: "ta", slug: "a", name: "A", sortOrder: 1 }),
         theme({ id: "tb", slug: "b", name: "B", sortOrder: 2 }),
@@ -719,6 +733,7 @@ describe("lot N4 — catalogue telepro dynamique", () => {
           id: "sim-done",
           scenarioId: "e2",
           status: SimulationStatus.COMPLETED,
+          evaluation: { overallScore: 80, summary: null, outcome: null },
         }),
         attempt({
           id: "sim-active",
@@ -748,7 +763,7 @@ describe("lot N4 — catalogue telepro dynamique", () => {
       ExerciseMissionStatus.IN_PROGRESS,
     );
     expect(catalog.themes[0]!.stages[1]!.exercises[0]!.status).toBe(
-      ExerciseMissionStatus.COMPLETED,
+      ExerciseMissionStatus.PASSED,
     );
     expect(catalog.themes[0]!.stages[1]!.state).not.toBe("LOCKED");
   });
@@ -850,7 +865,8 @@ describe("lot N4 — UI source Missions / admin", () => {
     const pathSrc = read("src", "app", "app", "missions", "MissionsPath.tsx");
     expect(pathSrc).toContain("ProspectAvatar");
     expect(pathSrc).toContain("prepareHref");
-    expect(pathSrc).toMatch(/\/prepare\//);
+    // Q2 : le clic suit le CTA du moteur (reprise/analyse/preparation), pas prepareHref seul.
+    expect(pathSrc).toContain("exercise.ctaHref");
     expect(pathSrc).toContain("isLaunchableNode");
     expect(pathSrc).toContain("href ?");
     expect(pathSrc).toContain("cartes phase");

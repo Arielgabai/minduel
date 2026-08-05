@@ -223,7 +223,7 @@ describe("teleproMissions ? tri et niveaux", () => {
         }),
       ],
     );
-    expect(view.exercises[0]?.status).toBe(ExerciseMissionStatus.COMPLETED);
+    expect(view.exercises[0]?.status).toBe(ExerciseMissionStatus.PASSED);
     expect(view.exercises[1]?.status).toBe(ExerciseMissionStatus.AVAILABLE);
   });
 
@@ -266,7 +266,7 @@ describe("teleproMissions ? statuts", () => {
     expect(view.exercises[0]?.activeSimulationId).toBe("sim-active");
   });
 
-  it("11. tentative terminee -> COMPLETED sans exiger evaluation OK", () => {
+  it("11. tentative terminee sans evaluation ne valide pas (reste AVAILABLE)", () => {
     expect(isFinishedSimulationStatus(SimulationStatus.COMPLETED)).toBe(true);
     expect(isFinishedSimulationStatus(SimulationStatus.EVALUATION_FAILED)).toBe(
       true,
@@ -274,6 +274,8 @@ describe("teleproMissions ? statuts", () => {
     expect(
       isFinishedSimulationStatus(SimulationStatus.EVALUATION_PENDING),
     ).toBe(true);
+    // Une tentative terminee sans score valide (ex. EVALUATION_FAILED) ne
+    // valide jamais l'exercice : le niveau reste simplement disponible.
     const view = buildTeleproMissionsView(
       [exercise({ id: "e1", name: "E1" })],
       [
@@ -284,10 +286,11 @@ describe("teleproMissions ? statuts", () => {
         }),
       ],
     );
-    expect(view.exercises[0]?.status).toBe(ExerciseMissionStatus.COMPLETED);
+    expect(view.exercises[0]?.status).toBe(ExerciseMissionStatus.AVAILABLE);
+    expect(view.exercises[0]?.isPassed).toBe(false);
   });
 
-  it("12. COMPLETED prioritaire sur verrouillage", () => {
+  it("12. PASSED prioritaire sur verrouillage", () => {
     const view = buildTeleproMissionsView(
       [
         exercise({ id: "e1", name: "E1", missionLevel: 1 }),
@@ -303,36 +306,76 @@ describe("teleproMissions ? statuts", () => {
       ],
     );
     const e2 = view.exercises.find((e) => e.id === "e2");
-    expect(e2?.status).toBe(ExerciseMissionStatus.COMPLETED);
-    expect(e2?.statusLabel).toBe(EXERCISE_MISSION_STATUS_LABELS.COMPLETED);
+    expect(e2?.status).toBe(ExerciseMissionStatus.PASSED);
+    expect(e2?.statusLabel).toBe(EXERCISE_MISSION_STATUS_LABELS.PASSED);
   });
 
   it("priorite resolver pur", () => {
+    // Actif prioritaire sur tout, meme deja passe.
     expect(
       resolveExerciseMissionStatus({
-        hasFinishedAttempt: true,
+        isPassed: true,
         hasActiveAttempt: true,
-        levelUnlocked: false,
-      }),
-    ).toBe(ExerciseMissionStatus.COMPLETED);
-    expect(
-      resolveExerciseMissionStatus({
-        hasFinishedAttempt: false,
-        hasActiveAttempt: true,
+        hasAnalysisPending: false,
+        hasEvaluatedBelowThreshold: false,
         levelUnlocked: false,
       }),
     ).toBe(ExerciseMissionStatus.IN_PROGRESS);
+    // Analyse en cours prioritaire sur verrouillage.
     expect(
       resolveExerciseMissionStatus({
-        hasFinishedAttempt: false,
+        isPassed: false,
         hasActiveAttempt: false,
+        hasAnalysisPending: true,
+        hasEvaluatedBelowThreshold: false,
+        levelUnlocked: false,
+      }),
+    ).toBe(ExerciseMissionStatus.ANALYSIS_PENDING);
+    // Score valide -> PASSED.
+    expect(
+      resolveExerciseMissionStatus({
+        isPassed: true,
+        hasActiveAttempt: false,
+        hasAnalysisPending: false,
+        hasEvaluatedBelowThreshold: false,
+        levelUnlocked: false,
+      }),
+    ).toBe(ExerciseMissionStatus.PASSED);
+    // Sous le seuil mais niveau deverrouille -> TO_RETRY.
+    expect(
+      resolveExerciseMissionStatus({
+        isPassed: false,
+        hasActiveAttempt: false,
+        hasAnalysisPending: false,
+        hasEvaluatedBelowThreshold: true,
+        levelUnlocked: true,
+      }),
+    ).toBe(ExerciseMissionStatus.TO_RETRY);
+    // Sous le seuil et niveau verrouille -> LOCKED (jamais TO_RETRY).
+    expect(
+      resolveExerciseMissionStatus({
+        isPassed: false,
+        hasActiveAttempt: false,
+        hasAnalysisPending: false,
+        hasEvaluatedBelowThreshold: true,
+        levelUnlocked: false,
+      }),
+    ).toBe(ExerciseMissionStatus.LOCKED);
+    expect(
+      resolveExerciseMissionStatus({
+        isPassed: false,
+        hasActiveAttempt: false,
+        hasAnalysisPending: false,
+        hasEvaluatedBelowThreshold: false,
         levelUnlocked: true,
       }),
     ).toBe(ExerciseMissionStatus.AVAILABLE);
     expect(
       resolveExerciseMissionStatus({
-        hasFinishedAttempt: false,
+        isPassed: false,
         hasActiveAttempt: false,
+        hasAnalysisPending: false,
+        hasEvaluatedBelowThreshold: false,
         levelUnlocked: false,
       }),
     ).toBe(ExerciseMissionStatus.LOCKED);
@@ -371,6 +414,7 @@ describe("teleproMissions ? recommandation", () => {
   });
 
   it("15. tout termine -> aucune recommandation", () => {
+    // Score >= seuil (60) requis pour que l'exercice compte comme termine.
     const view = buildTeleproMissionsView(
       [exercise({ id: "e1", name: "A" })],
       [
@@ -378,7 +422,7 @@ describe("teleproMissions ? recommandation", () => {
           id: "sim1",
           scenarioId: "e1",
           status: SimulationStatus.COMPLETED,
-          evaluation: { overallScore: 50, summary: null, outcome: null },
+          evaluation: { overallScore: 80, summary: null, outcome: null },
         }),
       ],
     );

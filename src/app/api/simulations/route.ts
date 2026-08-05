@@ -16,6 +16,10 @@ import {
   parsePromptArtifacts,
   verifyPromptArtifactsHash,
 } from "@/lib/promptArtifacts";
+import {
+  LOCKED_LEVEL_MESSAGE,
+  resolveTeleproScenarioStartAccess,
+} from "@/lib/missionAccess";
 
 const schema = z.object({ scenarioId: z.string().uuid() });
 
@@ -36,6 +40,19 @@ export async function POST(req: Request) {
     }
     if (scenario.status !== ScenarioStatus.PUBLISHED) {
       return fail(404, "Scénario introuvable ou non publié.");
+    }
+
+    // LOT Q2 : verrou pédagogique serveur (pas seulement UI).
+    const access = await resolveTeleproScenarioStartAccess(
+      user.id,
+      user.organizationId,
+      scenarioId,
+    );
+    if (!access.allowed) {
+      if (access.code === "NOT_FOUND") {
+        return fail(404, access.message);
+      }
+      return fail(409, access.message || LOCKED_LEVEL_MESSAGE);
     }
 
     // LOT O/P2 : catalogue global plateforme — l'accès ne dépend plus de ScenarioAssignment.
