@@ -26,6 +26,7 @@ const SCENARIO_SAFE_SELECT = {
   name: true,
   missionLevel: true,
   sortOrder: true,
+  passingScore: true,
   level: true,
   objective: true,
   prospectProfile: true,
@@ -73,6 +74,7 @@ function toCatalogExerciseInput(row: {
   name: string;
   missionLevel: number;
   sortOrder: number;
+  passingScore: number;
   level: string;
   objective: string | null;
   prospectProfile: string | null;
@@ -98,6 +100,7 @@ function toCatalogExerciseInput(row: {
     name: row.name,
     missionLevel: row.missionLevel,
     sortOrder: row.sortOrder,
+    passingScore: row.passingScore,
     level: row.level,
     objective: row.objective,
     prospectProfile: row.prospectProfile,
@@ -147,6 +150,7 @@ async function loadPublishedOrgExercisesAndAttempts(
           name: string;
           missionLevel: number;
           sortOrder: number;
+          passingScore: number;
           level: string;
           objective: string | null;
           prospectProfile: string | null;
@@ -168,6 +172,7 @@ async function loadPublishedOrgExercisesAndAttempts(
       name: row.name,
       missionLevel: row.missionLevel,
       sortOrder: row.sortOrder,
+    passingScore: row.passingScore,
       level: row.level,
       objective: row.objective,
       prospectProfile: row.prospectProfile,

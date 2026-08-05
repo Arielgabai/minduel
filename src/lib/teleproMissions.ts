@@ -13,8 +13,10 @@ import { isProspectAvatarKey } from "@/lib/prospectAvatars";
 
 /** Statuts métier affichés (non persistés). */
 export const ExerciseMissionStatus = {
-  COMPLETED: "COMPLETED",
+  PASSED: "PASSED",
   IN_PROGRESS: "IN_PROGRESS",
+  ANALYSIS_PENDING: "ANALYSIS_PENDING",
+  TO_RETRY: "TO_RETRY",
   AVAILABLE: "AVAILABLE",
   LOCKED: "LOCKED",
 } as const;
@@ -25,8 +27,10 @@ export const EXERCISE_MISSION_STATUS_LABELS: Record<
   ExerciseMissionStatus,
   string
 > = {
-  COMPLETED: "Terminé",
+  PASSED: "Validé",
   IN_PROGRESS: "En cours",
+  ANALYSIS_PENDING: "Analyse en cours",
+  TO_RETRY: "À refaire",
   AVAILABLE: "Disponible",
   LOCKED: "Verrouillé",
 };
@@ -57,6 +61,19 @@ export function isFinishedSimulationStatus(status: string): boolean {
   return FINISHED_SIMULATION_STATUSES.includes(status);
 }
 
+export const ANALYSIS_PENDING_SIMULATION_STATUSES: readonly string[] = [
+  SimulationStatus.FINALIZING,
+  SimulationStatus.EVALUATION_PENDING,
+  SimulationStatus.EVALUATING,
+];
+export const DEFAULT_PASSING_SCORE = 60;
+export function isAnalysisPendingSimulationStatus(status: string): boolean {
+  return ANALYSIS_PENDING_SIMULATION_STATUSES.includes(status);
+}
+export function isValidOverallScore(score: unknown): score is number {
+  return typeof score === "number" && Number.isFinite(score);
+}
+
 /** Champs scénario sûrs pour le modèle de vue télépro. */
 export type MissionExerciseInput = {
   id: string;
@@ -80,6 +97,8 @@ export type MissionExerciseInput = {
    * le service filtre avant build ; si fourni, false exclut l'exercice.
    */
   hasPublishedPrompt?: boolean;
+  /** Score minimal (0-100) pour valider l'exercice. Défaut : DEFAULT_PASSING_SCORE. */
+  passingScore?: number;
 };
 
 /** Theme Missions publie (projection sure). */
@@ -168,10 +187,18 @@ export type MissionExerciseView = {
   /** Lien lançable (prepare ou call) ; null si verrouillé. */
   ctaHref: string | null;
   ctaLabel: string | null;
+  prepareHref: string | null;
+  debriefHref: string | null;
   activeSimulationId: string | null;
   previousResult: PreviousResultView | null;
   prospectAvatarKey: string | null;
   recommended: boolean;
+  passingScore: number;
+  bestScore: number | null;
+  latestEvaluatedScore: number | null;
+  latestEvaluatedSimulationId: string | null;
+  isPassed: boolean;
+  lockMessage: string | null;
 };
 
 export type MissionLevelGroup = {
@@ -261,6 +288,112 @@ function attemptRecencyKey(a: MissionAttemptInput): string {
   return a.updatedAt || a.createdAt || "";
 }
 
+export function resolvePassingScore(exercise: {
+  passingScore?: number | null;
+}): number {
+  const raw = exercise.passingScore;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return Math.min(100, Math.max(0, Math.trunc(raw)));
+  }
+  return DEFAULT_PASSING_SCORE;
+}
+
+export function isValidatingAttempt(
+  attempt: MissionAttemptInput,
+  passingScore: number,
+): boolean {
+  if (!isFinishedSimulationStatus(attempt.status)) return false;
+  if (isAnalysisPendingSimulationStatus(attempt.status)) return false;
+  const score = attempt.evaluation?.overallScore;
+  if (!isValidOverallScore(score)) return false;
+  return score >= passingScore;
+}
+
+export function pickBestValidScore(
+  attempts: readonly MissionAttemptInput[]): number | null {
+  let best: number | null = null;
+  for (const a of attempts) {
+    if (!isFinishedSimulationStatus(a.status)) continue;
+    if (isAnalysisPendingSimulationStatus(a.status)) continue;
+    const score = a.evaluation?.overallScore;
+    if (!isValidOverallScore(score)) continue;
+    if (best === null || score > best) best = score;
+  }
+  return best;
+}
+
+export function isExercisePassed(
+  attempts: readonly MissionAttemptInput[],
+  passingScore: number,
+): boolean {
+  const best = pickBestValidScore(attempts);
+  return best !== null && best >= passingScore;
+}
+
+export function pickLatestEvaluatedAttempt(
+  attempts: readonly MissionAttemptInput[]): MissionAttemptInput | null {
+  const evaluated = attempts.filter(
+    (a) =>
+      isFinishedSimulationStatus(a.status) &&
+      !isAnalysisPendingSimulationStatus(a.status) &&
+      a.evaluation != null &&
+      isValidOverallScore(a.evaluation.overallScore),
+  );
+  if (evaluated.length === 0) return null;
+  evaluated.sort((a, b) =>
+    attemptRecencyKey(b).localeCompare(attemptRecencyKey(a)),
+  );
+  return evaluated[0] ?? null;
+}
+
+export function pickAnalysisPendingAttempt(
+  attempts: readonly MissionAttemptInput[],
+): MissionAttemptInput | null {
+  const pending = attempts.filter((a) =>
+    isAnalysisPendingSimulationStatus(a.status),
+  );
+  if (pending.length === 0) return null;
+  pending.sort((a, b) =>
+    attemptRecencyKey(b).localeCompare(attemptRecencyKey(a)),
+  );
+  return pending[0] ?? null;
+}
+
+type ExerciseAttemptState = {
+  passingScore: number;
+  active: MissionAttemptInput | null;
+  finished: MissionAttemptInput | null;
+  analysisPending: MissionAttemptInput | null;
+  latestEvaluated: MissionAttemptInput | null;
+  bestScore: number | null;
+  isPassed: boolean;
+  hasEvaluatedBelowThreshold: boolean;
+};
+
+function computeExerciseAttemptState(
+  exercise: MissionExerciseInput,
+  attempts: MissionAttemptInput[],
+): ExerciseAttemptState {
+  const passingScore = resolvePassingScore(exercise);
+  const active = pickActiveAttempt(attempts);
+  const finished = pickLatestFinishedAttempt(attempts);
+  const analysisPending = pickAnalysisPendingAttempt(attempts);
+  const latestEvaluated = pickLatestEvaluatedAttempt(attempts);
+  const bestScore = pickBestValidScore(attempts);
+  const isPassed = bestScore !== null && bestScore >= passingScore;
+  const hasEvaluatedBelowThreshold = latestEvaluated !== null && !isPassed;
+  return {
+    passingScore,
+    active,
+    finished,
+    analysisPending,
+    latestEvaluated,
+    bestScore,
+    isPassed,
+    hasEvaluatedBelowThreshold,
+  };
+}
+
 function pickActiveAttempt(
   attempts: MissionAttemptInput[],
 ): MissionAttemptInput | null {
@@ -292,7 +425,8 @@ function buildPreviousResult(
   const outcomeLabel = rawOutcome
     ? (OUTCOME_LABELS[rawOutcome] ?? rawOutcome)
     : null;
-  const evaluationPending = !evaluation;
+  const evaluationPending =
+    isAnalysisPendingSimulationStatus(attempt.status) || !evaluation;
   return {
     simulationId: attempt.id,
     overallScore: evaluation ? evaluation.overallScore : null,
@@ -341,12 +475,20 @@ export function resolveUnlockedLevels(
 }
 
 export function resolveExerciseMissionStatus(args: {
-  hasFinishedAttempt: boolean;
+  isPassed: boolean;
   hasActiveAttempt: boolean;
+  hasAnalysisPending: boolean;
+  hasEvaluatedBelowThreshold: boolean;
   levelUnlocked: boolean;
 }): ExerciseMissionStatus {
-  if (args.hasFinishedAttempt) return ExerciseMissionStatus.COMPLETED;
   if (args.hasActiveAttempt) return ExerciseMissionStatus.IN_PROGRESS;
+  if (args.hasAnalysisPending) return ExerciseMissionStatus.ANALYSIS_PENDING;
+  if (args.isPassed) return ExerciseMissionStatus.PASSED;
+  if (args.hasEvaluatedBelowThreshold) {
+    return args.levelUnlocked
+      ? ExerciseMissionStatus.TO_RETRY
+      : ExerciseMissionStatus.LOCKED;
+  }
   if (args.levelUnlocked) return ExerciseMissionStatus.AVAILABLE;
   return ExerciseMissionStatus.LOCKED;
 }
@@ -355,11 +497,21 @@ export function resolveExerciseCta(
   status: ExerciseMissionStatus,
   exerciseId: string,
   activeSimulationId: string | null,
+  analysisPendingSimulationId: string | null = null,
 ): { ctaHref: string | null; ctaLabel: string | null } {
   if (status === ExerciseMissionStatus.IN_PROGRESS && activeSimulationId) {
     return {
       ctaHref: `/app/call/${activeSimulationId}`,
       ctaLabel: "Reprendre",
+    };
+  }
+  if (
+    status === ExerciseMissionStatus.ANALYSIS_PENDING &&
+    analysisPendingSimulationId
+  ) {
+    return {
+      ctaHref: `/app/call/${analysisPendingSimulationId}/done`,
+      ctaLabel: "Voir l'analyse",
     };
   }
   if (status === ExerciseMissionStatus.AVAILABLE) {
@@ -368,7 +520,13 @@ export function resolveExerciseCta(
       ctaLabel: "Commencer",
     };
   }
-  if (status === ExerciseMissionStatus.COMPLETED) {
+  if (status === ExerciseMissionStatus.TO_RETRY) {
+    return {
+      ctaHref: `/app/prepare/${exerciseId}`,
+      ctaLabel: "Recommencer",
+    };
+  }
+  if (status === ExerciseMissionStatus.PASSED) {
     return {
       ctaHref: `/app/prepare/${exerciseId}`,
       ctaLabel: "Refaire",
@@ -377,7 +535,10 @@ export function resolveExerciseCta(
   return { ctaHref: null, ctaLabel: null };
 }
 
-/** Premier IN_PROGRESS, sinon premier AVAILABLE, sinon null. */
+/**
+ * Priorite : IN_PROGRESS, puis ANALYSIS_PENDING, puis premier TO_RETRY,
+ * puis premier AVAILABLE. Jamais LOCKED ni PASSED.
+ */
 export function pickRecommendedExercise(
   exercises: readonly MissionExerciseView[],
 ): MissionExerciseView | null {
@@ -385,6 +546,14 @@ export function pickRecommendedExercise(
     (e) => e.status === ExerciseMissionStatus.IN_PROGRESS,
   );
   if (inProgress) return inProgress;
+  const analysisPending = exercises.find(
+    (e) => e.status === ExerciseMissionStatus.ANALYSIS_PENDING,
+  );
+  if (analysisPending) return analysisPending;
+  const toRetry = exercises.find(
+    (e) => e.status === ExerciseMissionStatus.TO_RETRY,
+  );
+  if (toRetry) return toRetry;
   const available = exercises.find(
     (e) => e.status === ExerciseMissionStatus.AVAILABLE,
   );
@@ -410,36 +579,48 @@ export function buildTeleproMissionsView(
     attemptsByScenario.set(attempt.scenarioId, list);
   }
 
-  const completedIds = new Set<string>();
-  const activeByScenario = new Map<string, MissionAttemptInput | null>();
-  const finishedByScenario = new Map<string, MissionAttemptInput | null>();
+  const passedIds = new Set<string>();
+  const attemptStateByScenario = new Map<string, ExerciseAttemptState>();
 
   for (const exercise of exercises) {
     const attempts = attemptsByScenario.get(exercise.id) ?? [];
-    const active = pickActiveAttempt(attempts);
-    const finished = pickLatestFinishedAttempt(attempts);
-    activeByScenario.set(exercise.id, active);
-    finishedByScenario.set(exercise.id, finished);
-    if (finished) completedIds.add(exercise.id);
+    const state = computeExerciseAttemptState(exercise, attempts);
+    attemptStateByScenario.set(exercise.id, state);
+    if (state.isPassed) passedIds.add(exercise.id);
   }
 
-  const unlockedLevels = resolveUnlockedLevels(exercises, completedIds);
+  const unlockedLevels = resolveUnlockedLevels(exercises, passedIds);
 
   const views: MissionExerciseView[] = exercises.map((exercise) => {
-    const active = activeByScenario.get(exercise.id) ?? null;
-    const finished = finishedByScenario.get(exercise.id) ?? null;
+    const state = attemptStateByScenario.get(exercise.id)!;
     const levelUnlocked = unlockedLevels.has(exercise.missionLevel);
     const status = resolveExerciseMissionStatus({
-      hasFinishedAttempt: Boolean(finished),
-      hasActiveAttempt: Boolean(active),
+      isPassed: state.isPassed,
+      hasActiveAttempt: Boolean(state.active),
+      hasAnalysisPending: Boolean(state.analysisPending),
+      hasEvaluatedBelowThreshold: state.hasEvaluatedBelowThreshold,
       levelUnlocked,
     });
-    const activeSimulationId = active?.id ?? null;
+    const activeSimulationId = state.active?.id ?? null;
     const { ctaHref, ctaLabel } = resolveExerciseCta(
       status,
       exercise.id,
       activeSimulationId,
+      state.analysisPending?.id ?? null,
     );
+    const prepareHref =
+      status === ExerciseMissionStatus.AVAILABLE ||
+      status === ExerciseMissionStatus.TO_RETRY ||
+      status === ExerciseMissionStatus.PASSED
+        ? `/app/prepare/${exercise.id}`
+        : null;
+    const debriefHref = state.latestEvaluated
+      ? `/app/analysis/${state.latestEvaluated.id}`
+      : null;
+    const lockMessage =
+      status === ExerciseMissionStatus.LOCKED
+        ? "Niveau verrouillé : atteins le score requis au niveau précédent."
+        : null;
     return {
       id: exercise.id,
       name: exercise.name,
@@ -456,10 +637,19 @@ export function buildTeleproMissionsView(
       statusLabel: EXERCISE_MISSION_STATUS_LABELS[status],
       ctaHref,
       ctaLabel,
+      prepareHref,
+      debriefHref,
       activeSimulationId,
-      previousResult: buildPreviousResult(finished),
+      previousResult: buildPreviousResult(state.finished),
       prospectAvatarKey: exercise.prospectAvatarKey ?? null,
       recommended: false,
+      passingScore: state.passingScore,
+      bestScore: state.bestScore,
+      latestEvaluatedScore:
+        state.latestEvaluated?.evaluation?.overallScore ?? null,
+      latestEvaluatedSimulationId: state.latestEvaluated?.id ?? null,
+      isPassed: state.isPassed,
+      lockMessage,
     };
   });
 
@@ -481,7 +671,7 @@ export function buildTeleproMissionsView(
   }));
 
   const completedCount = views.filter(
-    (e) => e.status === ExerciseMissionStatus.COMPLETED,
+    (e) => e.status === ExerciseMissionStatus.PASSED,
   ).length;
   const totalCount = views.length;
   const empty = totalCount === 0;
@@ -520,6 +710,12 @@ export type TeleproMissionExerciseNode = {
   activeSimulationId: string | null;
   previousResult: PreviousResultView | null;
   recommended: boolean;
+  passingScore: number;
+  bestScore: number | null;
+  latestEvaluatedScore: number | null;
+  latestEvaluatedSimulationId: string | null;
+  isPassed: boolean;
+  lockMessage: string | null;
 };
 
 export type TeleproMissionStageView = {
@@ -652,20 +848,30 @@ export function isReadyCatalogExercise(exercise: MissionExerciseInput): boolean 
 function toExerciseNode(
   exercise: MissionExerciseInput,
   status: ExerciseMissionStatus,
-  activeSimulationId: string | null,
+  state: ExerciseAttemptState,
   previousResult: PreviousResultView | null,
   recommended: boolean,
 ): TeleproMissionExerciseNode {
+  const activeSimulationId = state.active?.id ?? null;
   const { ctaHref, ctaLabel } = resolveExerciseCta(
     status,
     exercise.id,
     activeSimulationId,
+    state.analysisPending?.id ?? null,
   );
   const prepareHref =
+    status === ExerciseMissionStatus.AVAILABLE ||
+    status === ExerciseMissionStatus.TO_RETRY ||
+    status === ExerciseMissionStatus.PASSED
+      ? "/app/prepare/" + exercise.id
+      : null;
+  const debriefHref = state.latestEvaluated
+    ? `/app/analysis/${state.latestEvaluated.id}`
+    : null;
+  const lockMessage =
     status === ExerciseMissionStatus.LOCKED
-      ? null
-      : "/app/prepare/" + exercise.id;
-  const debriefHref = previousResult?.analysisHref ?? null;
+      ? "Niveau verrouillé : atteins le score requis au niveau précédent."
+      : null;
   return {
     id: exercise.id,
     name: exercise.name,
@@ -683,6 +889,13 @@ function toExerciseNode(
     activeSimulationId,
     previousResult,
     recommended,
+    passingScore: state.passingScore,
+    bestScore: state.bestScore,
+    latestEvaluatedScore:
+      state.latestEvaluated?.evaluation?.overallScore ?? null,
+    latestEvaluatedSimulationId: state.latestEvaluated?.id ?? null,
+    isPassed: state.isPassed,
+    lockMessage,
   };
 }
 
@@ -691,14 +904,16 @@ function themeStateFromExercises(
 ): MissionThemeState {
   if (nodes.length === 0) return "EMPTY";
   const completed = nodes.filter(
-    (n) => n.status === ExerciseMissionStatus.COMPLETED,
+    (n) => n.status === ExerciseMissionStatus.PASSED,
   ).length;
   if (completed === nodes.length) return "COMPLETED";
   if (
     nodes.some(
       (n) =>
         n.status === ExerciseMissionStatus.IN_PROGRESS ||
-        n.status === ExerciseMissionStatus.COMPLETED,
+        n.status === ExerciseMissionStatus.ANALYSIS_PENDING ||
+        n.status === ExerciseMissionStatus.TO_RETRY ||
+        n.status === ExerciseMissionStatus.PASSED,
     )
   ) {
     return "IN_PROGRESS";
@@ -713,47 +928,48 @@ function buildStageView(args: {
   stage: MissionStageInput;
   exercises: MissionExerciseInput[];
   unlocked: boolean;
-  completedIds: ReadonlySet<string>;
-  activeByScenario: ReadonlyMap<string, MissionAttemptInput | null>;
-  finishedByScenario: ReadonlyMap<string, MissionAttemptInput | null>;
+  attemptStateByScenario: ReadonlyMap<string, ExerciseAttemptState>;
 }): TeleproMissionStageView {
   const ordered = sortMissionExercises(args.exercises);
   const nodes: TeleproMissionExerciseNode[] = ordered.map((exercise) => {
-    const active = args.activeByScenario.get(exercise.id) ?? null;
-    const finished = args.finishedByScenario.get(exercise.id) ?? null;
+    const state = args.attemptStateByScenario.get(exercise.id)!;
     const status = resolveExerciseMissionStatus({
-      hasFinishedAttempt: Boolean(finished),
-      hasActiveAttempt: Boolean(active),
+      isPassed: state.isPassed,
+      hasActiveAttempt: Boolean(state.active),
+      hasAnalysisPending: Boolean(state.analysisPending),
+      hasEvaluatedBelowThreshold: state.hasEvaluatedBelowThreshold,
       levelUnlocked: args.unlocked,
     });
     return toExerciseNode(
       exercise,
       status,
-      active?.id ?? null,
-      buildPreviousResult(finished),
+      state,
+      buildPreviousResult(state.finished),
       false,
     );
   });
 
   const completedCount = nodes.filter(
-    (n) => n.status === ExerciseMissionStatus.COMPLETED,
+    (n) => n.status === ExerciseMissionStatus.PASSED,
   ).length;
   const exerciseCount = nodes.length;
-  let state: MissionStageState = "LOCKED";
+  let stageState: MissionStageState = "LOCKED";
   if (args.unlocked) {
-    state =
+    stageState =
       exerciseCount > 0 && completedCount === exerciseCount
         ? "COMPLETED"
         : "OPEN";
   } else if (
     nodes.some(
       (n) =>
-        n.status === ExerciseMissionStatus.COMPLETED ||
-        n.status === ExerciseMissionStatus.IN_PROGRESS,
+        n.status === ExerciseMissionStatus.PASSED ||
+        n.status === ExerciseMissionStatus.IN_PROGRESS ||
+        n.status === ExerciseMissionStatus.ANALYSIS_PENDING ||
+        n.status === ExerciseMissionStatus.TO_RETRY,
     )
   ) {
-    // Priorité COMPLETED / IN_PROGRESS : le niveau reste consultable.
-    state =
+    // Priorité PASSED / IN_PROGRESS / ANALYSIS_PENDING / TO_RETRY : le niveau reste consultable.
+    stageState =
       completedCount === exerciseCount && exerciseCount > 0
         ? "COMPLETED"
         : "OPEN";
@@ -769,7 +985,7 @@ function buildStageView(args: {
     exerciseCount,
     completedCount,
     progressPct: progressPct(completedCount, exerciseCount),
-    state,
+    state: stageState,
     exercises: nodes,
   };
 }
@@ -848,16 +1064,13 @@ export function buildTeleproMissionsCatalogView(
     attemptsByScenario.set(attempt.scenarioId, list);
   }
 
-  const completedIds = new Set<string>();
-  const activeByScenario = new Map<string, MissionAttemptInput | null>();
-  const finishedByScenario = new Map<string, MissionAttemptInput | null>();
+  const passedIds = new Set<string>();
+  const attemptStateByScenario = new Map<string, ExerciseAttemptState>();
   for (const exercise of exercises) {
     const attempts = attemptsByScenario.get(exercise.id) ?? [];
-    const active = pickActiveAttempt(attempts);
-    const finished = pickLatestFinishedAttempt(attempts);
-    activeByScenario.set(exercise.id, active);
-    finishedByScenario.set(exercise.id, finished);
-    if (finished) completedIds.add(exercise.id);
+    const state = computeExerciseAttemptState(exercise, attempts);
+    attemptStateByScenario.set(exercise.id, state);
+    if (state.isPassed) passedIds.add(exercise.id);
   }
 
   const classified: MissionExerciseInput[] = [];
@@ -894,21 +1107,19 @@ export function buildTeleproMissionsCatalogView(
     const unlocked = resolveUnlockedStageIds(
       presentStages,
       stageExercises,
-      completedIds,
+      passedIds,
     );
     const stages = presentStages.map((stage) =>
       buildStageView({
         stage,
         exercises: stageExercises.get(stage.id) ?? [],
         unlocked: unlocked.has(stage.id),
-        completedIds,
-        activeByScenario,
-        finishedByScenario,
+        attemptStateByScenario,
       }),
     );
     const allNodes = stages.flatMap((st) => st.exercises);
     const completedCount = allNodes.filter(
-      (n) => n.status === ExerciseMissionStatus.COMPLETED,
+      (n) => n.status === ExerciseMissionStatus.PASSED,
     ).length;
     themes.push({
       id: theme.id,
@@ -955,21 +1166,19 @@ export function buildTeleproMissionsCatalogView(
     const unlocked = resolveUnlockedStageIds(
       syntheticStages,
       stageExercises,
-      completedIds,
+      passedIds,
     );
     const stages = syntheticStages.map((stage) =>
       buildStageView({
         stage,
         exercises: stageExercises.get(stage.id) ?? [],
         unlocked: unlocked.has(stage.id),
-        completedIds,
-        activeByScenario,
-        finishedByScenario,
+        attemptStateByScenario,
       }),
     );
     const allNodes = stages.flatMap((st) => st.exercises);
     const completedCount = allNodes.filter(
-      (n) => n.status === ExerciseMissionStatus.COMPLETED,
+      (n) => n.status === ExerciseMissionStatus.PASSED,
     ).length;
     themes.push({
       id: LEGACY_THEME_ID,
@@ -999,7 +1208,7 @@ export function buildTeleproMissionsCatalogView(
   const recommended = markRecommended(themes);
   const allNodes = themes.flatMap((t) => t.stages.flatMap((st) => st.exercises));
   const completedCount = allNodes.filter(
-    (n) => n.status === ExerciseMissionStatus.COMPLETED,
+    (n) => n.status === ExerciseMissionStatus.PASSED,
   ).length;
   const totalCount = allNodes.length;
   const empty = totalCount === 0;
@@ -1031,4 +1240,28 @@ export function findStageInCatalog(
   const stage = theme.stages.find((s) => s.slug === stageSlug) ?? null;
   if (!stage) return null;
   return { theme, stage };
+}
+
+/** Garde d'accès serveur : le télépro peut consulter la page de l'exercice. */
+export function isExerciseAccessUnlocked(
+  status: ExerciseMissionStatus,
+): boolean {
+  return (
+    status === ExerciseMissionStatus.AVAILABLE ||
+    status === ExerciseMissionStatus.TO_RETRY ||
+    status === ExerciseMissionStatus.PASSED ||
+    status === ExerciseMissionStatus.IN_PROGRESS ||
+    status === ExerciseMissionStatus.ANALYSIS_PENDING
+  );
+}
+
+/** Garde d'accès serveur : le télépro peut démarrer une nouvelle simulation. */
+export function canStartNewSimulation(
+  status: ExerciseMissionStatus,
+): boolean {
+  return (
+    status === ExerciseMissionStatus.AVAILABLE ||
+    status === ExerciseMissionStatus.TO_RETRY ||
+    status === ExerciseMissionStatus.PASSED
+  );
 }

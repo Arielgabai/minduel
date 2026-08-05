@@ -138,7 +138,9 @@ export function ExerciseComplete({
             variant={phase === "ready" ? "outline" : "primary"}
             className="min-h-11 w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric-400"
           >
-            Retour aux niveaux
+            {phase === "pending" && pollExhausted
+              ? "Retour à mes missions"
+              : "Retour aux niveaux"}
           </LinkButton>
         </div>
       </div>
@@ -209,10 +211,16 @@ function PendingBody({ exhausted }: { exhausted: boolean }) {
   return (
     <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
       {exhausted ? (
-        <p className="text-sm text-white/70">
-          L&apos;analyse prend plus de temps que prévu. Ton exercice est bien
-          terminé — reviens un peu plus tard pour consulter le débrief.
-        </p>
+        <div className="space-y-2 text-left">
+          <p className="text-sm text-white/70">
+            L&apos;analyse continue en arrière-plan. Tu pourras retrouver le
+            débrief depuis Missions en ouvrant l&apos;exercice.
+          </p>
+          <p className="text-sm text-white/50">
+            Pas besoin d&apos;attendre ici : reviens plus tard, ton exercice
+            est bien enregistré.
+          </p>
+        </div>
       ) : (
         <>
           <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-2 border-white/15 border-t-violet-400" />

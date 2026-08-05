@@ -137,6 +137,8 @@ model Scenario {
   slug                    String?
   missionLevel            Int     @default(1)
   sortOrder               Int     @default(0)
+  // LOT Q2 : score minimum de validation (0–100) pour débloquer le niveau suivant.
+  passingScore            Int     @default(60)
   // Catalogue Missions (lot N1) : classement optionnel et avatar de prospect.
   // Additifs et nullables : les exercices existants restent « Non classé ».
   missionStageId          String?

@@ -65,6 +65,8 @@ export const ExerciseMetadataSchema = z.object({
   level: z.enum(["FACILE", "MOYEN", "DIFFICILE"]).default("MOYEN"),
   missionLevel: z.number().int().min(1).max(20).default(1),
   sortOrder: z.number().int().min(0).max(999).default(0),
+  // LOT Q2 : seuil de validation (entier 0–100 inclus). Défaut 60 à la création.
+  passingScore: z.number().int().min(0).max(100).default(60),
   callType: z
     .enum(["VENTE", "PITCH_INVESTISSEUR", "ENTRETIEN_EMBAUCHE"])
     .default("VENTE"),
@@ -345,6 +347,7 @@ function listItem(s: {
   level: string;
   missionLevel: number;
   sortOrder: number;
+  passingScore: number;
   publishedPromptBundleId: string | null;
   updatedAt: string;
   createdAt: string;
@@ -361,6 +364,7 @@ function listItem(s: {
     level: s.level,
     missionLevel: s.missionLevel,
     sortOrder: s.sortOrder,
+    passingScore: s.passingScore,
     publishedPromptBundleId: s.publishedPromptBundleId,
     updatedAt: s.updatedAt,
     createdAt: s.createdAt,
@@ -423,6 +427,7 @@ export async function listExercises(
       level: true,
       missionLevel: true,
       sortOrder: true,
+      passingScore: true,
       publishedPromptBundleId: true,
       updatedAt: true,
       createdAt: true,
@@ -512,6 +517,7 @@ export async function createExerciseDraft(
           slug,
           missionLevel: body.missionLevel,
           sortOrder: body.sortOrder,
+          passingScore: body.passingScore,
           callType: body.callType,
           level: body.level,
           campaign: body.campaign ?? null,
@@ -634,6 +640,11 @@ export async function updateExerciseMetadata(
         level: body.level ?? existing.level,
         missionLevel: body.missionLevel ?? existing.missionLevel,
         sortOrder: body.sortOrder ?? existing.sortOrder,
+        // 0 est une valeur valide : ne pas utiliser ?? (truthy).
+        passingScore:
+          body.passingScore !== undefined
+            ? body.passingScore
+            : existing.passingScore,
         callType: body.callType ?? existing.callType,
         campaign: body.campaign !== undefined ? body.campaign : existing.campaign,
         offer: body.offer !== undefined ? body.offer : existing.offer,
@@ -1029,6 +1040,7 @@ export async function duplicateExercise(
         slug,
         missionLevel: source.missionLevel,
         sortOrder: source.sortOrder,
+        passingScore: source.passingScore,
         callType: source.callType,
         level: source.level,
         campaign: source.campaign,

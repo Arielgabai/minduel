@@ -193,6 +193,7 @@ describe("LOT P1 — parcours thèmes /app/missions (page 14)", () => {
         id: "att1",
         scenarioId: "e1",
         status: SimulationStatus.COMPLETED,
+        evaluation: { overallScore: 80, summary: null, outcome: null },
       }),
     ];
     const catalog = buildTeleproMissionsCatalogView(
@@ -223,6 +224,7 @@ describe("LOT P1 — parcours thèmes /app/missions (page 14)", () => {
         id: "att1",
         scenarioId: "e1",
         status: SimulationStatus.COMPLETED,
+        evaluation: { overallScore: 80, summary: null, outcome: null },
       }),
     ];
     const catalog = buildTeleproMissionsCatalogView(

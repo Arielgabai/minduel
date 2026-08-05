@@ -873,3 +873,44 @@ Toutes les routes API sont protégées par `requirePlatformAdmin`. Enveloppes `{
 - **Aucune** migration / `--apply` / base réelle / seed / OpenAI / réseau / simulation / micro.
 - **Aucun** commit / push.
 - Contenu hors catalogue signalé par le dry-run, jamais déplacé/copié automatiquement.
+
+## Lot Q2 — Score de validation, déblocage pédagogique et accès débrief (05/08/2026)
+
+**Objectif unique :** un télépro n'accède au niveau suivant d'un thème qu'après validation des niveaux précédents au score minimum configuré ; accès direct au dernier débrief depuis l'exercice et le parcours Missions.
+
+### Règles livrées
+
+- Validation par score : tentative terminée + évaluation persistée + `overallScore` fini ≥ `Scenario.passingScore`.
+- Seuil administrable par exercice (`passingScore`), défaut **60/100** (Prisma + applicatif).
+- Déblocage au **meilleur score historique** (un score plus faible ultérieur ne reverrouille jamais).
+- États de vue : `PASSED`, `IN_PROGRESS`, `ANALYSIS_PENDING`, `TO_RETRY`, `AVAILABLE`, `LOCKED`.
+- Accès « Voir le dernier débrief » depuis Missions / prepare → `/app/analysis/<latest-evaluated-simulation-id>`.
+- Gate serveur partagé (`missionAccess`) sur `/app/prepare/[scenarioId]` et `POST /api/simulations` (HTTP 409 si verrouillé).
+- Isolation P2 conservée : scénario = org catalogue ; simulations/évaluations = org télépro.
+- Timeout `/done` : analyse continue en arrière-plan ; retour via Missions ; pas de double `/end`.
+
+### Migration
+
+- Fichier créé : `prisma/migrations/20260805100000_scenario_passing_score/migration.sql`
+- Additive uniquement (colonne + CHECK 0–100) ; **non exécutée** dans ce lot.
+- Aucun backfill applicatif : défaut SQL 60 pour les lignes existantes.
+
+### Vérifications (exécutées localement, 05/08/2026)
+
+| Commande | Résultat |
+|----------|----------|
+| `npm test -- tests/lotQ2.test.ts` | **33 passed** |
+| `npx tsc --noEmit` | **OK** (exit 0) |
+| `npm run lint --if-present` | **OK** (exit 0 ; warning next-lint deprecation uniquement) |
+| `npx prisma validate` | **OK** — schema valid |
+| `npm test` | **34 files / 615 tests passed** |
+| `npm run build` | **OK** (exit 0) |
+| `git diff --check` | **OK** (exit 0) |
+
+### Confirmations
+
+- **Aucune** migration exécutée / base réelle / seed / backfill.
+- **Aucun** OpenAI / réseau / micro / simulation réelle.
+- **Aucun** commit / push / déploiement Render.
+- **Aucune** nouvelle dépendance ni variable d'environnement.
+- Q1 / Realtime / VAD inchangés ; pas de retour de `ScenarioAssignment` comme gate.

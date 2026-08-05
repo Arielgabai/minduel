@@ -69,7 +69,7 @@ describe("Lot L — Missions parcours (dynamique, lot I)", () => {
   });
 
   it("missionNodeVariant reflète le statut calculé par le lot I", () => {
-    expect(missionNodeVariant(ExerciseMissionStatus.COMPLETED)).toBe("completed");
+    expect(missionNodeVariant(ExerciseMissionStatus.PASSED)).toBe("completed");
     expect(missionNodeVariant(ExerciseMissionStatus.IN_PROGRESS)).toBe("current");
     expect(missionNodeVariant(ExerciseMissionStatus.AVAILABLE)).toBe("available");
     expect(missionNodeVariant(ExerciseMissionStatus.LOCKED)).toBe("locked");
@@ -83,8 +83,18 @@ describe("Lot L — Missions parcours (dynamique, lot I)", () => {
       exercise({ id: "c", name: "C", missionLevel: 3, sortOrder: 0 }),
     ];
     const attempts = [
-      attempt({ id: "s1", scenarioId: "a", status: SimulationStatus.COMPLETED }),
-      attempt({ id: "s2", scenarioId: "b", status: SimulationStatus.COMPLETED }),
+      attempt({
+        id: "s1",
+        scenarioId: "a",
+        status: SimulationStatus.COMPLETED,
+        evaluation: { overallScore: 80, summary: null, outcome: null },
+      }),
+      attempt({
+        id: "s2",
+        scenarioId: "b",
+        status: SimulationStatus.COMPLETED,
+        evaluation: { overallScore: 80, summary: null, outcome: null },
+      }),
     ];
     const view = buildTeleproMissionsView(exercises, attempts);
 

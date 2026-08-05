@@ -30,6 +30,8 @@ export type AdminExerciseListItem = {
   level: string;
   missionLevel: number;
   sortOrder: number;
+  /** LOT Q2 — défaut applicatif 60 si absent d'une fixture / réponse ancienne. */
+  passingScore?: number;
   callType?: string;
   updatedAt: string;
   createdAt: string;
@@ -65,6 +67,8 @@ export type AdminExerciseDetail = {
   level: string;
   missionLevel: number;
   sortOrder: number;
+  /** LOT Q2 — défaut applicatif 60 si absent d'une fixture / réponse ancienne. */
+  passingScore?: number;
   callType: string;
   campaign: string | null;
   offer: string | null;
@@ -166,6 +170,7 @@ export type MetaFormState = {
   level: string;
   missionLevel: number;
   sortOrder: number;
+  passingScore: number;
   callType: string;
   campaign: string;
   offer: string;
@@ -215,6 +220,7 @@ export function metaFormFromExercise(ex: AdminExerciseDetail): MetaFormState {
     level: ex.level,
     missionLevel: ex.missionLevel,
     sortOrder: ex.sortOrder,
+    passingScore: ex.passingScore ?? 60,
     callType: ex.callType,
     campaign: ex.campaign ?? "",
     offer: ex.offer ?? "",
@@ -248,6 +254,7 @@ export function buildMetadataPatchPayload(meta: MetaFormState) {
     level: meta.level,
     missionLevel: Number(meta.missionLevel),
     sortOrder: Number(meta.sortOrder),
+    passingScore: Number(meta.passingScore),
     callType: meta.callType,
     campaign: meta.campaign,
     offer: meta.offer,
