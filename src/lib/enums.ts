@@ -52,6 +52,9 @@ export const RecordingStatus = {
   REVIEW_REQUIRED: "REVIEW_REQUIRED",
   READY: "READY",
   FAILED: "FAILED",
+  // LOT Q3C : annulation coopérative (appels réels télépro uniquement).
+  CANCEL_REQUESTED: "CANCEL_REQUESTED",
+  CANCELLED: "CANCELLED",
 } as const;
 export type RecordingStatus =
   (typeof RecordingStatus)[keyof typeof RecordingStatus];
@@ -63,6 +66,13 @@ export const RECORDING_IN_PROGRESS_STATUSES: readonly string[] = [
   RecordingStatus.TRANSCRIBING,
   RecordingStatus.ANALYZING,
   RecordingStatus.GENERATING_EXERCISE,
+  RecordingStatus.CANCEL_REQUESTED,
+];
+
+/** Statuts d'annulation (jamais présentés comme FAILED). */
+export const RECORDING_CANCEL_STATUSES: readonly string[] = [
+  RecordingStatus.CANCEL_REQUESTED,
+  RecordingStatus.CANCELLED,
 ];
 
 /**

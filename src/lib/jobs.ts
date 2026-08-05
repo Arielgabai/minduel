@@ -65,6 +65,52 @@ function isUniqueViolation(err: unknown): boolean {
   );
 }
 
+/** Client Prisma global ou client de transaction interactive. */
+export type PrismaJobClient = Prisma.TransactionClient | typeof prisma;
+
+/**
+ * LOT Q3C-FIX — garantit l'existence d'un ProcessingJob sans le réveiller
+ * ni le réinitialiser. Unicité (type, targetId) : P2002 → déjà présent.
+ * Variante transactionnelle minimale (pas de refactor de la file).
+ */
+export async function ensureProcessingJobExists(
+  input: {
+    organizationId: string;
+    type: string;
+    targetId: string;
+    maxAttempts?: number;
+  },
+  client: PrismaJobClient = prisma,
+): Promise<{ created: boolean }> {
+  try {
+    await client.processingJob.create({
+      data: {
+        organizationId: input.organizationId,
+        type: input.type,
+        targetId: input.targetId,
+        maxAttempts: input.maxAttempts ?? 5,
+        status: JobStatus.PENDING,
+      },
+    });
+    log.info("job.ensured", {
+      type: input.type,
+      targetId: input.targetId,
+      organizationId: input.organizationId,
+      created: true,
+    });
+    return { created: true };
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err;
+    log.info("job.ensured", {
+      type: input.type,
+      targetId: input.targetId,
+      organizationId: input.organizationId,
+      created: false,
+    });
+    return { created: false };
+  }
+}
+
 /**
  * Ajoute une tâche pour une cible donnée, ou réveille une tâche en attente.
  * Idempotent, et surtout NON destructif : une tâche terminale (COMPLETED /

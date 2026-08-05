@@ -18,6 +18,7 @@ const prepareSchema = z.object({
   mimeType: z.string().min(1).max(120),
   sizeBytes: z.number().int().positive(),
   title: z.string().max(120).optional(),
+  uploadAttemptId: z.string().uuid(),
   // Horodatages client refusés silencieusement (strip) — jamais persistés.
   consentConfirmedAt: z.unknown().optional(),
   consentAt: z.unknown().optional(),
@@ -28,6 +29,7 @@ const prepareSchema = z.object({
   mimeType: body.mimeType,
   sizeBytes: body.sizeBytes,
   title: body.title,
+  uploadAttemptId: body.uploadAttemptId,
 }));
 
 /**

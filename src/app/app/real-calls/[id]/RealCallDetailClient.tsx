@@ -8,6 +8,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ScoreRing } from "@/components/ScoreRing";
 import { Badge, Button, Card, LinkButton, SectionTitle } from "@/components/ui";
 import { formatAtMs } from "@/lib/debriefView";
@@ -17,6 +18,12 @@ import { cx, formatDateTimeFr, formatDuration } from "@/lib/utils";
 
 const POLL_INTERVAL_MS = 2500;
 const MAX_POLLS = 40;
+
+const CANCEL_CONFIRM =
+  "Arrêter cette analyse ? L'étape actuellement envoyée au fournisseur peut encore se terminer, mais son résultat ne sera pas conservé.";
+
+const DELETE_CONFIRM =
+  "Supprimer définitivement cet appel, son audio, son transcript et son analyse ?";
 
 const DETAIL_TABS = [
   { id: "resume", label: "Résumé" },
@@ -55,7 +62,7 @@ function pipelineStepIndex(status: string): number {
 
 function statusBadgeTone(
   tone: RealCallDetailView["statusTone"],
-): "mint" | "red" | "blue" | "gray" {
+): "mint" | "red" | "blue" | "gray" | "flame" {
   switch (tone) {
     case "ready":
       return "mint";
@@ -63,6 +70,9 @@ function statusBadgeTone(
       return "red";
     case "processing":
       return "blue";
+    case "pending":
+      return "flame";
+    case "cancelled":
     default:
       return "gray";
   }
@@ -692,16 +702,34 @@ export function RealCallDetailClient({
 }: {
   initial: RealCallDetailView;
 }) {
+  const router = useRouter();
   const [data, setData] = useState(initial);
   const [pollExhausted, setPollExhausted] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const pollsRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isReady = data.status === RecordingStatus.READY;
   const isFailed = data.status === RecordingStatus.FAILED;
-  const isProcessing = !isReady && !isFailed;
+  const isCancelled = data.status === RecordingStatus.CANCELLED;
+  const isCancelRequested = data.status === RecordingStatus.CANCEL_REQUESTED;
+  const isTerminal = isReady || isFailed || isCancelled;
+  const isProcessing = !isTerminal;
+  const canCancel =
+    data.status === RecordingStatus.UPLOADED ||
+    data.status === RecordingStatus.PREPROCESSING ||
+    data.status === RecordingStatus.TRANSCRIBING ||
+    data.status === RecordingStatus.ANALYZING ||
+    data.status === RecordingStatus.WAITING_FOR_CLARIFICATION ||
+    data.status === RecordingStatus.GENERATING_EXERCISE;
+  const canDelete =
+    data.status === RecordingStatus.PENDING_UPLOAD ||
+    data.status === RecordingStatus.READY ||
+    data.status === RecordingStatus.FAILED ||
+    data.status === RecordingStatus.CANCELLED;
 
   const fetchDetail = useCallback(async (): Promise<RealCallDetailView | null> => {
     try {
@@ -766,6 +794,53 @@ export function RealCallDetailClient({
     }
   }, [data.id, fetchDetail, retrying]);
 
+  const cancelAnalysis = useCallback(async () => {
+    if (actionBusy) return;
+    if (!window.confirm(CANCEL_CONFIRM)) return;
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/real-calls/${data.id}/cancel`, {
+        method: "POST",
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        setActionError(json?.error?.message ?? "Impossible d'arrêter l'analyse.");
+        return;
+      }
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      const detail = await fetchDetail();
+      if (detail) setData(detail);
+    } catch {
+      setActionError("Impossible d'arrêter l'analyse.");
+    } finally {
+      setActionBusy(false);
+    }
+  }, [actionBusy, data.id, fetchDetail]);
+
+  const deleteCall = useCallback(async () => {
+    if (actionBusy) return;
+    if (!window.confirm(DELETE_CONFIRM)) return;
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/real-calls/${data.id}`, { method: "DELETE" });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        setActionError(json?.error?.message ?? "Impossible de supprimer cet appel.");
+        return;
+      }
+      router.push("/app/real-calls");
+    } catch {
+      setActionError("Impossible de supprimer cet appel.");
+    } finally {
+      setActionBusy(false);
+    }
+  }, [actionBusy, data.id, router]);
+
   return (
     <div className="animate-fade-up pb-6">
       <div className="mb-4">
@@ -782,8 +857,60 @@ export function RealCallDetailClient({
         </p>
       </header>
 
+      {actionError ? (
+        <p className="mb-3 text-sm text-red-300" role="alert">
+          {actionError}
+        </p>
+      ) : null}
+
+      <div className="mb-4 flex flex-col gap-2">
+        {canCancel ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 w-full"
+            disabled={actionBusy}
+            onClick={() => void cancelAnalysis()}
+          >
+            {actionBusy ? "Arrêt…" : "Arrêter l'analyse"}
+          </Button>
+        ) : null}
+        {isCancelRequested ? (
+          <Button type="button" variant="outline" className="min-h-11 w-full" disabled>
+            Arrêt en cours…
+          </Button>
+        ) : null}
+        {canDelete ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 w-full"
+            disabled={actionBusy}
+            onClick={() => void deleteCall()}
+          >
+            {actionBusy ? "Suppression…" : "Supprimer"}
+          </Button>
+        ) : null}
+      </div>
+
       {isProcessing ? (
         <ProcessingView data={data} pollExhausted={pollExhausted} />
+      ) : null}
+
+      {isCancelled ? (
+        <Card className="mt-2">
+          <p className="text-sm text-white/70">
+            Analyse arrêtée. Aucun résultat de coaching n&apos;a été conservé pour
+            cette tentative. Vous pouvez supprimer cet appel.
+          </p>
+          <LinkButton
+            href="/app/real-calls"
+            variant="primary"
+            className="mt-4 min-h-11 w-full"
+          >
+            Revenir à mes appels
+          </LinkButton>
+        </Card>
       ) : null}
 
       {isFailed ? (

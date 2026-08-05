@@ -3,6 +3,7 @@ import { handle, ok, fail } from "@/lib/api";
 import { requireTelepro } from "@/lib/auth";
 import { rateLimit } from "@/lib/ratelimit";
 import {
+  deleteRealCall,
   finalizeRealCallUpload,
   getRealCallDetailForTelepro,
   retryRealCallProcessing,
@@ -18,6 +19,7 @@ const actionSchema = z.discriminatedUnion("action", [
 /**
  * GET /api/real-calls/[id] — détail + analyse persistée (propriétaire uniquement).
  * POST /api/real-calls/[id] — finalize (JSON ou multipart) | retry.
+ * DELETE /api/real-calls/[id] — suppression propriétaire (états terminaux).
  */
 export async function GET(
   _req: Request,
@@ -85,6 +87,29 @@ export async function POST(
     }
 
     const result = await retryRealCallProcessing(actor, id);
+    return ok(result);
+  });
+}
+
+export async function DELETE(
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  return handle(async () => {
+    const telepro = await requireTelepro();
+    const { id } = await params;
+    const rl = rateLimit(`real-call-delete:${telepro.id}`, 20, 60_000);
+    if (!rl.allowed) {
+      return fail(429, "Trop de suppressions. Réessaie dans une minute.");
+    }
+    const result = await deleteRealCall(
+      {
+        id: telepro.id,
+        organizationId: telepro.organizationId!,
+        role: telepro.role,
+      },
+      id,
+    );
     return ok(result);
   });
 }
