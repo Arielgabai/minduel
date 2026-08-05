@@ -1,22 +1,31 @@
 /**
- * LOT Q3A — vues API sûres pour les appels réels télépro.
+ * LOT Q3A/Q3B — vues API sûres pour les appels réels télépro.
  * Aucun prompt, artifact, hash, clé S3, URL signée ni transcript brut en liste.
  * JSON invalide / partiel traité défensivement (champs absents = indisponibles).
  */
+import { RecordingStatus } from "@/lib/enums";
 import { RealCallAnalysisResultSchema } from "@/lib/providers/schemas";
 import type { ValidatedRealCallAnalysis } from "@/lib/providers/schemas";
-import { recommendExercisesForWeakSkills } from "@/lib/realCallRecommend";
+import {
+  recommendExercisesForWeakSkills,
+  type AssociatedExerciseRecommendation,
+} from "@/lib/realCallRecommend";
+import type {
+  PersonalComparativeView,
+  SimRealComparisonView,
+} from "@/lib/realCallCompare";
 
 export type RealCallListItem = {
   id: string;
   title: string;
   status: string;
+  statusLabel: string;
+  statusTone: "ready" | "processing" | "failed" | "pending";
   source: string;
   createdAt: string;
   updatedAt: string;
   durationSec: number;
   language: string;
-  /** Score global si persisté ; null = indisponible. */
   overallScore: number | null;
   errorMessage: string | null;
 };
@@ -41,12 +50,44 @@ export type RealCallDetailView = RealCallListItem & {
       role: string | null;
       startMs: number;
       endMs: number;
-      /** Texte anonymisé uniquement. */
       content: string;
     }>;
   };
-  associatedExercises: ReturnType<typeof recommendExercisesForWeakSkills>;
+  associatedExercises: AssociatedExerciseRecommendation;
+  personalComparative: PersonalComparativeView;
+  simRealComparison: SimRealComparisonView;
 };
+
+export function realCallStatusLabel(status: string): string {
+  switch (status) {
+    case RecordingStatus.PENDING_UPLOAD:
+      return "Import incomplet";
+    case RecordingStatus.UPLOADED:
+      return "En attente";
+    case RecordingStatus.PREPROCESSING:
+      return "Préparation";
+    case RecordingStatus.TRANSCRIBING:
+      return "Transcription";
+    case RecordingStatus.ANALYZING:
+    case RecordingStatus.WAITING_FOR_CLARIFICATION:
+      return "Analyse";
+    case RecordingStatus.READY:
+      return "Analysé";
+    case RecordingStatus.FAILED:
+      return "Échec";
+    default:
+      return status;
+  }
+}
+
+export function realCallStatusTone(
+  status: string,
+): RealCallListItem["statusTone"] {
+  if (status === RecordingStatus.READY) return "ready";
+  if (status === RecordingStatus.FAILED) return "failed";
+  if (status === RecordingStatus.PENDING_UPLOAD) return "pending";
+  return "processing";
+}
 
 export function toRealCallListItem(rec: {
   id: string;
@@ -64,6 +105,8 @@ export function toRealCallListItem(rec: {
     id: rec.id,
     title: rec.title,
     status: rec.status,
+    statusLabel: realCallStatusLabel(rec.status),
+    statusTone: realCallStatusTone(rec.status),
     source: rec.source ?? "UNKNOWN",
     createdAt: rec.createdAt,
     updatedAt: rec.updatedAt,
@@ -74,10 +117,6 @@ export function toRealCallListItem(rec: {
   };
 }
 
-/**
- * Parse défensif du payload coaching : JSON invalide / incomplet
- * → available=false et champs null (jamais de zéros inventés).
- */
 export function parseCoachingPayload(
   raw: string | null | undefined,
 ): {
@@ -99,6 +138,23 @@ export function parseCoachingPayload(
   }
   return { available: true, data: result.data };
 }
+
+const EMPTY_PERSONAL: PersonalComparativeView = {
+  available: false,
+  sampleSize: 0,
+  currentScore: null,
+  personalAverage: null,
+  trend: "unavailable",
+  message:
+    "Pas encore assez d'historique personnel pour déterminer une tendance.",
+};
+
+const EMPTY_SIM_REAL: SimRealComparisonView = {
+  available: false,
+  rows: [],
+  message:
+    "Aucune compétence comparable entre cet appel réel et tes simulations évaluées.",
+};
 
 export function toRealCallDetailView(input: {
   recording: {
@@ -128,6 +184,9 @@ export function toRealCallDetailView(input: {
       anonymizedText: string | null;
     }>;
   } | null;
+  associatedExercises?: AssociatedExerciseRecommendation;
+  personalComparative?: PersonalComparativeView;
+  simRealComparison?: SimRealComparisonView;
 }): RealCallDetailView {
   const list = toRealCallListItem({
     ...input.recording,
@@ -137,13 +196,10 @@ export function toRealCallDetailView(input: {
   });
   const coaching = parseCoachingPayload(input.analysis?.coachingPayload);
   const data = coaching.data;
-
   const turns = input.transcript
     ? [...input.transcript.turns].sort((a, b) => a.idx - b.idx)
     : [];
-
   const anonymizedTurns = turns.filter((t) => t.anonymizedText != null);
-
   const weakSkillKeys = data?.weakSkillKeys ?? [];
 
   return {
@@ -173,8 +229,14 @@ export function toRealCallDetailView(input: {
         content: t.anonymizedText as string,
       })),
     },
-    associatedExercises: recommendExercisesForWeakSkills({
-      weakSkillKeys,
-    }),
+    associatedExercises:
+      input.associatedExercises ??
+      recommendExercisesForWeakSkills({ weakSkillKeys }),
+    personalComparative: input.personalComparative ?? {
+      ...EMPTY_PERSONAL,
+      currentScore:
+        input.analysis?.overallScore ?? data?.overallScore ?? null,
+    },
+    simRealComparison: input.simRealComparison ?? EMPTY_SIM_REAL,
   };
 }

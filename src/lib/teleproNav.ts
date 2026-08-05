@@ -26,14 +26,17 @@ export const TELEPRO_HISTORY_PATH = "/app/history";
 export const TELEPRO_HISTORY_REDIRECT = "/app/progression";
 
 /**
- * Routes spécialisées hors tab-bar : préparation, appel, débrief.
+ * Routes spécialisées hors tab-bar : préparation, appel, débrief, détail appel réel.
  * Le shell conserve l'auth mais masque la navigation basse.
+ * La liste `/app/real-calls` conserve la tab-bar (pas de 6e onglet).
  */
 export function shouldShowTeleproNav(pathname: string | null | undefined): boolean {
   if (!pathname) return true;
   if (pathname.startsWith("/app/prepare")) return false;
   if (pathname.startsWith("/app/call")) return false;
   if (pathname.startsWith("/app/analysis")) return false;
+  // Immersif : détail / traitement d'un appel réel (pas la liste).
+  if (/^\/app\/real-calls\/[^/]+/.test(pathname)) return false;
   return true;
 }
 

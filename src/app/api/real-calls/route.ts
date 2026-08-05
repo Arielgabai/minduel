@@ -2,6 +2,7 @@ import { z } from "zod";
 import { handle, ok, fail } from "@/lib/api";
 import { requireTelepro } from "@/lib/auth";
 import { rateLimit } from "@/lib/ratelimit";
+import { serverConfig } from "@/lib/config";
 import {
   listRealCallsForTelepro,
   prepareRealCallUpload,
@@ -41,7 +42,11 @@ export async function GET() {
       organizationId: telepro.organizationId!,
       role: telepro.role,
     });
-    return ok({ items, rightsConfirmationText: REAL_CALL_RIGHTS_CONFIRMATION });
+    return ok({
+      items,
+      rightsConfirmationText: REAL_CALL_RIGHTS_CONFIRMATION,
+      maxUploadMb: serverConfig.storage.maxUploadMb,
+    });
   });
 }
 

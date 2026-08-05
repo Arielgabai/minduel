@@ -182,6 +182,22 @@ export default async function TeleproHome() {
           </div>
         </div>
       ) : null}
+
+      <div className="mt-8">
+        <SectionTitle className="mb-3">Appels réels</SectionTitle>
+        <Link
+          href="/app/real-calls"
+          className="block min-h-11 rounded-2xl border border-violet-500/30 bg-gradient-to-br from-[#1a1240] via-[#0d1017] to-[#1a0f0a] p-5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-electric-400"
+        >
+          <p className="text-lg font-bold text-white">Analyser un appel réel</p>
+          <p className="mt-2 text-sm text-white/60">
+            Importe un enregistrement MP3 et obtiens un débrief personnalisé.
+          </p>
+          <span className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-gradient-to-r from-electric-500 to-flame-500 px-4 text-sm font-semibold text-white">
+            Voir mes appels
+          </span>
+        </Link>
+      </div>
     </div>
   );
 }

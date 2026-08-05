@@ -22,9 +22,21 @@ import { log } from "@/lib/log";
 import {
   toRealCallDetailView,
   toRealCallListItem,
+  parseCoachingPayload,
   type RealCallDetailView,
   type RealCallListItem,
 } from "@/lib/realCallView";
+import {
+  recommendExercisesForWeakSkills,
+  type RecommendCandidate,
+} from "@/lib/realCallRecommend";
+import {
+  buildPersonalComparative,
+  buildSimRealComparison,
+} from "@/lib/realCallCompare";
+import { resolvePlatformCatalogOrganizationId } from "@/lib/platformCatalog";
+import { loadTeleproMissionsCatalogView } from "@/lib/teleproMissionsService";
+import { ScenarioStatus } from "@/lib/enums";
 
 /** Confirmation attendue côté API (horodatage seul persisté, pas de signature juridique). */
 export const REAL_CALL_RIGHTS_CONFIRMATION =
@@ -176,11 +188,136 @@ export async function getRealCallDetailForTelepro(
   });
   if (!rec) throw new HttpError(404, "Appel introuvable.");
 
+  const coaching = parseCoachingPayload(rec.analysis?.coachingPayload);
+  const weakSkillKeys = coaching.data?.weakSkillKeys ?? [];
+
+  const [historyRows, simScores, associatedExercises] = await Promise.all([
+    prisma.callRecording.findMany({
+      where: {
+        organizationId,
+        teleproId: user.id,
+        source: RecordingSource.MANUAL_UPLOAD,
+        status: RecordingStatus.READY,
+        NOT: { id: rec.id },
+      },
+      select: {
+        id: true,
+        analysis: { select: { overallScore: true } },
+      },
+    }),
+    prisma.skillScore.findMany({
+      where: {
+        evaluation: {
+          simulation: {
+            organizationId,
+            teleproId: user.id,
+          },
+        },
+      },
+      select: { key: true, label: true, score: true, maxScore: true },
+    }),
+    buildAssociatedExercisesForTelepro(user, weakSkillKeys),
+  ]);
+
+  const personalComparative = buildPersonalComparative({
+    currentId: rec.id,
+    currentScore:
+      rec.analysis?.overallScore ?? coaching.data?.overallScore ?? null,
+    history: historyRows.map((h) => ({
+      id: h.id,
+      overallScore: h.analysis?.overallScore ?? null,
+      talkRatio: null,
+    })),
+  });
+
+  const simRealComparison = buildSimRealComparison({
+    realSkills: (coaching.data?.skillScores ?? []).map((s) => ({
+      key: s.key,
+      label: s.label,
+      score: s.score,
+      maxScore: s.maxScore,
+    })),
+    simSkills: simScores.map((s) => ({
+      key: s.key,
+      label: s.label,
+      score: s.score,
+      maxScore: s.maxScore,
+    })),
+  });
+
   return toRealCallDetailView({
     recording: rec,
     analysis: rec.analysis,
     transcript: rec.transcript,
+    associatedExercises,
+    personalComparative,
+    simRealComparison,
   });
+}
+
+async function buildAssociatedExercisesForTelepro(
+  user: TeleproActor,
+  weakSkillKeys: string[],
+) {
+  if (weakSkillKeys.length === 0) {
+    return recommendExercisesForWeakSkills({ weakSkillKeys });
+  }
+
+  let catalogOrganizationId: string;
+  try {
+    catalogOrganizationId = await resolvePlatformCatalogOrganizationId();
+  } catch {
+    return recommendExercisesForWeakSkills({ weakSkillKeys });
+  }
+
+  const [mappings, catalog] = await Promise.all([
+    prisma.scenarioSkillMapping.findMany({
+      where: {
+        organizationId: catalogOrganizationId,
+        skillKey: { in: weakSkillKeys.map((k) => k.trim().toLowerCase()) },
+      },
+      select: { scenarioId: true, skillKey: true },
+    }),
+    loadTeleproMissionsCatalogView(user.id, user.organizationId),
+  ]);
+
+  if (mappings.length === 0) {
+    return recommendExercisesForWeakSkills({ weakSkillKeys });
+  }
+
+  const keysByScenario = new Map<string, string[]>();
+  for (const m of mappings) {
+    const list = keysByScenario.get(m.scenarioId) ?? [];
+    list.push(m.skillKey);
+    keysByScenario.set(m.scenarioId, list);
+  }
+
+  const candidates: RecommendCandidate[] = [];
+  for (const theme of catalog.themes) {
+    for (const stage of theme.stages) {
+      for (const ex of stage.exercises) {
+        const skillKeys = keysByScenario.get(ex.id);
+        if (!skillKeys || skillKeys.length === 0) continue;
+        candidates.push({
+          scenarioId: ex.id,
+          name: ex.name,
+          status: ScenarioStatus.PUBLISHED,
+          themeStatus: "PUBLISHED",
+          stageStatus: "PUBLISHED",
+          themeName: theme.name,
+          level: ex.difficulty,
+          missionLevel: ex.missionLevel,
+          sortOrder: ex.sortOrder,
+          prospectAvatarKey: ex.prospectAvatarKey,
+          skillKeys,
+          hasPublishedPrompt: true,
+          missionStatus: ex.status,
+        });
+      }
+    }
+  }
+
+  return recommendExercisesForWeakSkills({ weakSkillKeys, candidates });
 }
 
 /**

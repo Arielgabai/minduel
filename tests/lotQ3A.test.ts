@@ -239,9 +239,7 @@ describe("Q3A — vues liste/détail sans fuite", () => {
     expect(detail.transcript.segments[0]!.content).toBe("Bonjour {{CLIENT}}");
     expect(detail.transcript.segments[0]!.content).not.toContain("Jean Dupont");
     expect(detail.associatedExercises.items).toEqual([]);
-    expect(detail.associatedExercises.reason).toBe(
-      "NO_RELIABLE_SKILL_KEY_MAPPING",
-    );
+    expect(detail.associatedExercises.reason).toBe("NO_MAPPING");
     expect(detail.analysis.weakSkillKeys).toEqual(["decouverte"]);
   });
 });
@@ -263,7 +261,7 @@ describe("Q3A — recommandation exercices (liste vide)", () => {
     expect(a).toEqual(b);
     expect(a.items).toEqual([]);
     expect(a.weakSkillKeys).toEqual(["decouverte", "ecoute"]);
-    expect(a.reason).toBe("NO_RELIABLE_SKILL_KEY_MAPPING");
+    expect(a.reason).toBe("NO_MAPPING");
   });
 });
 
@@ -432,8 +430,8 @@ describe("Q3A — garde-fous source (auth, isolation, pipeline)", () => {
     expect(genBlock.indexOf("isTeleproRealCall(rec)")).toBeLessThan(
       genBlock.indexOf("prisma.scenario.create"),
     );
-    expect(serviceSrc).not.toContain("prisma.scenario");
-    expect(serviceSrc).not.toContain("promptBundle");
+    expect(serviceSrc).not.toContain("prisma.scenario.create");
+    expect(serviceSrc).not.toContain("prisma.promptBundle");
   });
 
   it("useAsModel=false pour les appels réels", () => {

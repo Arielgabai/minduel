@@ -50,6 +50,7 @@ model Organization {
   skillSections        SkillSection[]
   skillArticles        SkillArticle[]
   skillArticleMappings SkillArticleMapping[]
+  scenarioSkillMappings ScenarioSkillMapping[]
 
   missionThemes MissionTheme[]
   missionStages MissionStage[]
@@ -195,9 +196,13 @@ model Scenario {
   // par l'API admin (missionStageId = null) avant toute suppression de niveau.
   // Unicité (missionStageId, organizationId) : un niveau = au plus un exercice.
   missionStage          MissionStage?        @relation(fields: [missionStageId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  // LOT Q3B : mappings explicites exercice ↔ clés de compétences (reco appels réels).
+  skillMappings         ScenarioSkillMapping[]
 
   @@unique([organizationId, slug])
   @@unique([missionStageId, organizationId])
+  // Ancre pour FK composite ScenarioSkillMapping (id, organizationId).
+  @@unique([id, organizationId])
   @@index([organizationId])
   @@index([status])
   @@index([organizationId, missionLevel, sortOrder])
@@ -617,6 +622,24 @@ model SkillArticleMapping {
 
   @@unique([articleId, skillKey])
   @@index([organizationId, skillKey])
+}
+
+// LOT Q3B : mapping administrable exercice catalogue ↔ clé de compétence.
+// Sert uniquement à la recommandation déterministe depuis weakSkillKeys (appels réels).
+// organizationId = org catalogue plateforme. Archivage du scénario conserve les lignes.
+model ScenarioSkillMapping {
+  id             String @id @default(uuid())
+  organizationId String
+  scenarioId     String
+  skillKey       String
+  createdAt      String
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scenario     Scenario     @relation(fields: [scenarioId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@unique([scenarioId, skillKey])
+  @@index([organizationId, skillKey])
+  @@index([organizationId])
 }
 
 // ---------------------------------------------------------------------------

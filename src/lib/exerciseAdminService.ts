@@ -92,6 +92,25 @@ export const ExerciseMetadataSchema = z.object({
 
 export type ExerciseMetadataInput = z.infer<typeof ExerciseMetadataSchema>;
 
+/** Clé de compétence (weakSkillKeys appels réels / ScenarioSkillMapping). */
+const ExerciseSkillKeySchema = z
+  .string()
+  .trim()
+  .transform((s) => s.toLowerCase())
+  .pipe(
+    z
+      .string()
+      .min(1)
+      .max(80)
+      .regex(/^[a-z0-9][a-z0-9._-]*$/, "Clé de compétence invalide."),
+  );
+
+const ExerciseSkillKeysSchema = z.array(ExerciseSkillKeySchema);
+
+const UpdateExerciseMetadataSchema = ExerciseMetadataSchema.partial().extend({
+  skillKeys: ExerciseSkillKeysSchema.optional(),
+});
+
 const ListFiltersSchema = z.object({
   status: z
     .enum(["DRAFT", "REVIEW_REQUIRED", "PUBLISHED", "ARCHIVED"])
@@ -259,6 +278,10 @@ async function loadExerciseOrThrow(id: string, organizationId: string) {
           status: true,
           theme: { select: { id: true, name: true, status: true } },
         },
+      },
+      skillMappings: {
+        select: { skillKey: true },
+        orderBy: { skillKey: "asc" },
       },
       _count: { select: { simulations: true, assignments: true } },
     },
@@ -472,6 +495,7 @@ export async function getExercise(id: string, organizationId: string) {
     failureConditions: s.failureConditions,
     targetDurationSec: s.targetDurationSec,
     traineeBrief: s.traineeBrief,
+    skillKeys: (s.skillMappings ?? []).map((m) => m.skillKey),
     authorId: s.authorId,
     referenceCounts: {
       simulations: s._count.simulations,
@@ -600,11 +624,14 @@ export async function updateExerciseMetadata(
   actorId: string,
   raw: unknown,
 ) {
-  const body = ExerciseMetadataSchema.partial().parse(raw);
+  const body = UpdateExerciseMetadataSchema.parse(raw);
   const existing = await loadExerciseOrThrow(id, organizationId);
   if (existing.status === ScenarioStatus.ARCHIVED) {
     throw new HttpError(409, "Exercice archivé : métadonnées non modifiables.");
   }
+
+  const skillKeys =
+    body.skillKeys !== undefined ? [...new Set(body.skillKeys)] : undefined;
 
   // Classement Missions : undefined = inchangé, null = « Non classé ».
   let missionStageId = existing.missionStageId;
@@ -631,62 +658,87 @@ export async function updateExerciseMetadata(
     await assertUniqueSlug(organizationId, slug, id);
   }
 
+  const now = nowIso();
+  const scenarioData = {
+    name: body.name ?? existing.name,
+    slug,
+    level: body.level ?? existing.level,
+    missionLevel: body.missionLevel ?? existing.missionLevel,
+    sortOrder: body.sortOrder ?? existing.sortOrder,
+    // 0 est une valeur valide : ne pas utiliser ?? (truthy).
+    passingScore:
+      body.passingScore !== undefined
+        ? body.passingScore
+        : existing.passingScore,
+    callType: body.callType ?? existing.callType,
+    campaign: body.campaign !== undefined ? body.campaign : existing.campaign,
+    offer: body.offer !== undefined ? body.offer : existing.offer,
+    prospectProfile:
+      body.prospectProfile !== undefined
+        ? body.prospectProfile
+        : existing.prospectProfile,
+    initialSituation:
+      body.initialSituation !== undefined
+        ? body.initialSituation
+        : existing.initialSituation,
+    objective:
+      body.objective !== undefined ? body.objective : existing.objective,
+    personality:
+      body.personality !== undefined
+        ? body.personality
+        : existing.personality,
+    allowedObjections: body.allowedObjections
+      ? stringifyJson(body.allowedObjections)
+      : existing.allowedObjections,
+    secretInfos: body.secretInfos
+      ? stringifyJson(body.secretInfos)
+      : existing.secretInfos,
+    successConditions:
+      body.successConditions !== undefined
+        ? body.successConditions
+        : existing.successConditions,
+    failureConditions:
+      body.failureConditions !== undefined
+        ? body.failureConditions
+        : existing.failureConditions,
+    targetDurationSec: body.targetDurationSec ?? existing.targetDurationSec,
+    traineeBrief:
+      body.traineeBrief !== undefined
+        ? body.traineeBrief
+        : existing.traineeBrief,
+    // Le bundle de prompts n'est jamais touché par cette mise à jour.
+    missionStageId,
+    prospectAvatarKey,
+    updatedAt: now,
+  };
+
   try {
-    await prisma.scenario.update({
-      where: { id },
-      data: {
-        name: body.name ?? existing.name,
-        slug,
-        level: body.level ?? existing.level,
-        missionLevel: body.missionLevel ?? existing.missionLevel,
-        sortOrder: body.sortOrder ?? existing.sortOrder,
-        // 0 est une valeur valide : ne pas utiliser ?? (truthy).
-        passingScore:
-          body.passingScore !== undefined
-            ? body.passingScore
-            : existing.passingScore,
-        callType: body.callType ?? existing.callType,
-        campaign: body.campaign !== undefined ? body.campaign : existing.campaign,
-        offer: body.offer !== undefined ? body.offer : existing.offer,
-        prospectProfile:
-          body.prospectProfile !== undefined
-            ? body.prospectProfile
-            : existing.prospectProfile,
-        initialSituation:
-          body.initialSituation !== undefined
-            ? body.initialSituation
-            : existing.initialSituation,
-        objective:
-          body.objective !== undefined ? body.objective : existing.objective,
-        personality:
-          body.personality !== undefined
-            ? body.personality
-            : existing.personality,
-        allowedObjections: body.allowedObjections
-          ? stringifyJson(body.allowedObjections)
-          : existing.allowedObjections,
-        secretInfos: body.secretInfos
-          ? stringifyJson(body.secretInfos)
-          : existing.secretInfos,
-        successConditions:
-          body.successConditions !== undefined
-            ? body.successConditions
-            : existing.successConditions,
-        failureConditions:
-          body.failureConditions !== undefined
-            ? body.failureConditions
-            : existing.failureConditions,
-        targetDurationSec: body.targetDurationSec ?? existing.targetDurationSec,
-        traineeBrief:
-          body.traineeBrief !== undefined
-            ? body.traineeBrief
-            : existing.traineeBrief,
-        // Le bundle de prompts n'est jamais touché par cette mise à jour.
-        missionStageId,
-        prospectAvatarKey,
-        updatedAt: nowIso(),
-      },
-    });
+    if (skillKeys !== undefined) {
+      await prisma.$transaction(async (tx) => {
+        await tx.scenario.update({
+          where: { id },
+          data: scenarioData,
+        });
+        await tx.scenarioSkillMapping.deleteMany({
+          where: { scenarioId: id, organizationId },
+        });
+        if (skillKeys.length > 0) {
+          await tx.scenarioSkillMapping.createMany({
+            data: skillKeys.map((skillKey) => ({
+              organizationId,
+              scenarioId: id,
+              skillKey,
+              createdAt: now,
+            })),
+          });
+        }
+      });
+    } else {
+      await prisma.scenario.update({
+        where: { id },
+        data: scenarioData,
+      });
+    }
   } catch (err) {
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&
