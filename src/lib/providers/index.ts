@@ -10,6 +10,7 @@ import {
   demoAnonymization,
   demoCallAnalysis,
   demoScenarioGeneration,
+  demoRealCallAnalysis,
 } from "./demo";
 import {
   OpenAIRealtimeSessionProvider,
@@ -18,6 +19,7 @@ import {
   OpenAISpeakerAttributionProvider,
   OpenAIAnonymizationProvider,
   OpenAICallAnalysisProvider,
+  OpenAIRealCallAnalysisProvider,
   OpenAIScenarioGenerationProvider,
 } from "./openai";
 import type {
@@ -29,6 +31,7 @@ import type {
   SpeakerAttributionProvider,
   AnonymizationProvider,
   CallAnalysisProvider,
+  RealCallAnalysisProvider,
   ScenarioGenerationProvider,
 } from "./types";
 
@@ -41,6 +44,7 @@ export * from "./types";
 export {
   EvaluationResultSchema,
   CallAnalysisResultSchema,
+  RealCallAnalysisResultSchema,
   ScenarioGenerationResultSchema,
   SpeakerAttributionSchema,
   AnonymizationSchema,
@@ -99,6 +103,11 @@ export function getAnonymizationProvider(): AnonymizationProvider {
 export function getCallAnalysisProvider(): CallAnalysisProvider {
   if (isDemoMode()) return demoCallAnalysis;
   return new OpenAICallAnalysisProvider();
+}
+
+export function getRealCallAnalysisProvider(): RealCallAnalysisProvider {
+  if (isDemoMode()) return demoRealCallAnalysis;
+  return new OpenAIRealCallAnalysisProvider();
 }
 
 export function getScenarioGenerationProvider(): ScenarioGenerationProvider {
