@@ -150,3 +150,46 @@ export type ValidatedCallAnalysis = z.infer<typeof CallAnalysisResultSchema>;
 export type ValidatedScenarioGeneration = z.infer<
   typeof ScenarioGenerationResultSchema
 >;
+
+// ---------------------------------------------------------------------------
+// LOT Q3A : analyse coaching d'un appel réel télépro (Zod avant persistance).
+// Les métriques absentes restent null (jamais remplacées par 0).
+// ---------------------------------------------------------------------------
+
+export const RealCallMetricSchema = z.object({
+  talkRatio: z.number().min(0).max(1).nullable(),
+  openQuestionsCount: z.number().int().min(0).nullable(),
+  firstClosingAttemptMs: z.number().int().min(0).nullable(),
+});
+
+export const RealCallKeyMomentSchema = z.object({
+  role: z.string().min(1),
+  quote: z.string(),
+  atMs: z.number().int().min(0),
+  explanation: z.string(),
+});
+
+export const RealCallDialoguePassageSchema = z.object({
+  role: z.string().min(1),
+  atMs: z.number().int().min(0),
+  content: z.string(),
+  explanation: z.string(),
+  suggestedReformulation: z.string().nullable(),
+});
+
+export const RealCallAnalysisResultSchema = z.object({
+  summary: z.string(),
+  // null = score global non calculé / indisponible (jamais inventé).
+  overallScore: z.number().int().min(0).max(100).nullable(),
+  skillScores: z.array(SkillScoreResultSchema).min(1),
+  keyMoments: z.array(RealCallKeyMomentSchema),
+  dialoguePassages: z.array(RealCallDialoguePassageSchema),
+  why: z.array(z.string()),
+  metrics: RealCallMetricSchema,
+  // Clés normalisées pour une reco d'exercices ultérieure (Q3B / mapping admin).
+  weakSkillKeys: z.array(z.string().min(1)),
+});
+
+export type ValidatedRealCallAnalysis = z.infer<
+  typeof RealCallAnalysisResultSchema
+>;

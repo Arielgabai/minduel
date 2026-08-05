@@ -94,6 +94,7 @@ export default function AdminExerciseDetailPage() {
     traineeBrief: "",
     missionStageId: "",
     prospectAvatarKey: "",
+    skillKeysText: "",
   });
   const [themes, setThemes] = useState<MissionThemeNode[]>([]);
   const [missionThemeId, setMissionThemeId] = useState("");
@@ -856,6 +857,30 @@ export default function AdminExerciseDetailPage() {
           Brief stagiaire
           <textarea rows={3} className={fieldCls} disabled={archived || busy} value={meta.traineeBrief} onChange={(e) => setMeta({ ...meta, traineeBrief: e.target.value })} />
         </label>
+        <fieldset className="space-y-2 rounded-xl border border-[#1e222c] p-4">
+          <legend className="px-1 text-sm font-semibold text-white">
+            Compétences ciblées
+          </legend>
+          <label className={labelCls}>
+            Clés de compétences (une par ligne ou séparées par des virgules)
+            <textarea
+              rows={4}
+              className={fieldCls}
+              disabled={archived || busy}
+              value={meta.skillKeysText}
+              onChange={(e) =>
+                setMeta({ ...meta, skillKeysText: e.target.value })
+              }
+              placeholder="ex. decouverte, objections, closing"
+            />
+          </label>
+          <p className="text-xs text-[#9AA1B2]">
+            Ces clés relient l&apos;exercice aux faiblesses détectées sur les
+            appels réels (weakSkillKeys). Lorsqu&apos;un télépro consulte le
+            détail d&apos;un appel, les exercices dont les clés correspondent
+            peuvent être recommandés. Laisser vide supprime tout mapping.
+          </p>
+        </fieldset>
         {metaError && (
           <p className="text-sm text-[#FF5C5C]" role="alert">
             {metaError}

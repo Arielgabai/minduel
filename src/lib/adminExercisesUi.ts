@@ -87,6 +87,8 @@ export type AdminExerciseDetail = {
   missionThemeId?: string | null;
   missionThemeName?: string | null;
   prospectAvatarKey?: string | null;
+  /** LOT Q3B — clés liées aux faiblesses d'appels réels (ScenarioSkillMapping). */
+  skillKeys?: string[];
   referenceCounts?: { simulations: number; assignments: number };
   currentBundle: null | {
     id: string;
@@ -188,7 +190,30 @@ export type MetaFormState = {
   missionStageId: string;
   /** "" = aucun avatar ; sinon clé du catalogue local. */
   prospectAvatarKey: string;
+  /** Une clé par ligne ou séparées par des virgules ; vide = aucun mapping. */
+  skillKeysText: string;
 };
+
+/**
+ * Découpe une saisie (retours ligne ou virgules) en clés normalisées
+ * (trim, minuscules, dédupliquées). Une saisie vide retourne [].
+ */
+export function parseSkillKeysInput(text: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of text.split(/[\n,]/)) {
+    const v = part.trim().toLowerCase();
+    if (v && !seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+export function joinSkillKeysInput(items: string[]): string {
+  return items.join("\n");
+}
 
 export type ApplyExerciseSync = {
   syncMeta?: boolean;
@@ -239,6 +264,7 @@ export function metaFormFromExercise(ex: AdminExerciseDetail): MetaFormState {
     traineeBrief: ex.traineeBrief ?? "",
     missionStageId: ex.missionStageId ?? "",
     prospectAvatarKey: ex.prospectAvatarKey ?? "",
+    skillKeysText: joinSkillKeysInput(ex.skillKeys ?? []),
   };
 }
 
@@ -277,6 +303,7 @@ export function buildMetadataPatchPayload(meta: MetaFormState) {
     // "" → null : l'exercice redevient « Non classé » / sans avatar.
     missionStageId: meta.missionStageId ? meta.missionStageId : null,
     prospectAvatarKey: meta.prospectAvatarKey ? meta.prospectAvatarKey : null,
+    skillKeys: parseSkillKeysInput(meta.skillKeysText),
   };
   if (meta.slug.trim()) payload.slug = meta.slug.trim();
   return payload;

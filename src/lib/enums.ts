@@ -41,6 +41,8 @@ export const ScenarioStatus = {
 export type ScenarioStatus = (typeof ScenarioStatus)[keyof typeof ScenarioStatus];
 
 export const RecordingStatus = {
+  // LOT Q3A : enregistrement créé, fichier audio pas encore finalisé.
+  PENDING_UPLOAD: "PENDING_UPLOAD",
   UPLOADED: "UPLOADED",
   PREPROCESSING: "PREPROCESSING",
   TRANSCRIBING: "TRANSCRIBING",
@@ -62,6 +64,17 @@ export const RECORDING_IN_PROGRESS_STATUSES: readonly string[] = [
   RecordingStatus.ANALYZING,
   RecordingStatus.GENERATING_EXERCISE,
 ];
+
+/**
+ * Source d'un CallRecording.
+ * null / absent en base = historique (manager / legacy).
+ * MANUAL_UPLOAD = appel réel télépro (LOT Q3A).
+ */
+export const RecordingSource = {
+  MANUAL_UPLOAD: "MANUAL_UPLOAD",
+} as const;
+export type RecordingSource =
+  (typeof RecordingSource)[keyof typeof RecordingSource];
 
 export const KnowledgeType = {
   OBJECTION: "OBJECTION",

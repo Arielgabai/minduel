@@ -170,6 +170,47 @@ export interface CallAnalysisProvider {
   }): Promise<CallAnalysisResult>;
 }
 
+/** LOT Q3A : analyse coaching d'un appel réel (distinct de l'appel modèle). */
+export interface RealCallAnalysisResult {
+  summary: string;
+  overallScore: number | null;
+  skillScores: SkillScoreResult[];
+  keyMoments: Array<{
+    role: string;
+    quote: string;
+    atMs: number;
+    explanation: string;
+  }>;
+  dialoguePassages: Array<{
+    role: string;
+    atMs: number;
+    content: string;
+    explanation: string;
+    suggestedReformulation: string | null;
+  }>;
+  why: string[];
+  metrics: {
+    talkRatio: number | null;
+    openQuestionsCount: number | null;
+    firstClosingAttemptMs: number | null;
+  };
+  weakSkillKeys: string[];
+}
+
+export interface RealCallAnalysisProvider {
+  analyze(input: {
+    segments: Array<{
+      idx: number;
+      role: string;
+      text: string;
+      startMs: number;
+      endMs: number;
+    }>;
+    language: string;
+    seed: string;
+  }): Promise<RealCallAnalysisResult>;
+}
+
 // ---- Génération de scénario (exercice équivalent, anonymisé) ----
 export interface GeneratedRubricCriterion {
   key: string;

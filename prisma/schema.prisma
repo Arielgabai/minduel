@@ -50,6 +50,7 @@ model Organization {
   skillSections        SkillSection[]
   skillArticles        SkillArticle[]
   skillArticleMappings SkillArticleMapping[]
+  scenarioSkillMappings ScenarioSkillMapping[]
 
   missionThemes MissionTheme[]
   missionStages MissionStage[]
@@ -79,12 +80,16 @@ model User {
   assignmentsAsTelepro ScenarioAssignment[] @relation("AssignmentTelepro")
   assignmentsAsManager ScenarioAssignment[] @relation("AssignmentManager")
   uploadedRecordings   CallRecording[]
+  // LOT Q3A : appels réels dont le télépro est le sujet (distinct de uploaderId).
+  ownedRealCalls       CallRecording[]      @relation("CallRecordingTelepro")
   simulations          Simulation[]
   auditEvents          AuditEvent[]
   sessions             Session[]
 
   @@index([organizationId])
   @@index([email])
+  // LOT Q3A : ancre pour FK composite CallRecording(teleproId, organizationId).
+  @@unique([id, organizationId])
 }
 
 model Session {
@@ -191,9 +196,13 @@ model Scenario {
   // par l'API admin (missionStageId = null) avant toute suppression de niveau.
   // Unicité (missionStageId, organizationId) : un niveau = au plus un exercice.
   missionStage          MissionStage?        @relation(fields: [missionStageId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  // LOT Q3B : mappings explicites exercice ↔ clés de compétences (reco appels réels).
+  skillMappings         ScenarioSkillMapping[]
 
   @@unique([organizationId, slug])
   @@unique([missionStageId, organizationId])
+  // Ancre pour FK composite ScenarioSkillMapping (id, organizationId).
+  @@unique([id, organizationId])
   @@index([organizationId])
   @@index([status])
   @@index([organizationId, missionLevel, sortOrder])
@@ -248,6 +257,12 @@ model CallRecording {
   id                        String   @id @default(uuid())
   organizationId            String
   uploaderId                String?
+  // LOT Q3A : propriétaire métier TELEPRO d'un appel réel (null = legacy / manager).
+  teleproId                 String?
+  // LOT Q3A : null = historique ; MANUAL_UPLOAD = appel réel télépro.
+  source                    String?
+  // LOT Q3A : horodatage serveur de la confirmation de droit (jamais fourni par le client).
+  consentConfirmedAt        String?
   title                     String
   campaign                  String?
   callOutcome               String? // VENTE | REFUS | RAPPEL | RDV | AUTRE
@@ -267,8 +282,8 @@ model CallRecording {
   audioCodec                String?
   audioBitrate              Int?
   // Statut métier du pipeline (voir RecordingStatus dans src/lib/enums.ts) :
-  // UPLOADED | PREPROCESSING | TRANSCRIBING | ANALYZING | WAITING_FOR_CLARIFICATION
-  // | GENERATING_EXERCISE | REVIEW_REQUIRED | READY | FAILED
+  // PENDING_UPLOAD | UPLOADED | PREPROCESSING | TRANSCRIBING | ANALYZING
+  // | WAITING_FOR_CLARIFICATION | GENERATING_EXERCISE | REVIEW_REQUIRED | READY | FAILED
   status                    String   @default("UPLOADED")
   errorMessage              String?
   // Résultats détectés (surfacés dans la liste manager, remplis par le pipeline)
@@ -286,6 +301,9 @@ model CallRecording {
 
   organization      Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   uploader          User?           @relation(fields: [uploaderId], references: [id])
+  // FK composite multi-tenant : telepro et appel partagent organizationId.
+  // Restrict : ne jamais SET NULL organizationId. Legacy teleproId=null autorisé.
+  telepro           User?           @relation("CallRecordingTelepro", fields: [teleproId, organizationId], references: [id, organizationId], onDelete: Restrict)
   transcript        Transcript?
   analysis          CallAnalysis?
   generatedScenario Scenario?       @relation("ScenarioSourceRecording")
@@ -293,6 +311,9 @@ model CallRecording {
 
   @@index([organizationId])
   @@index([status])
+  @@index([teleproId])
+  @@index([organizationId, teleproId])
+  @@index([source])
 }
 
 model Transcript {
@@ -377,6 +398,8 @@ model EvaluationRubric {
 
 // Analyse structurée d'un appel modèle (1:1 avec CallRecording).
 // Colonnes indexables pour la liste/filtrage ; JSON pour les structures variables.
+// LOT Q3A : overallScore + coachingPayload pour les appels réels télépro
+// (contrat distinct de l'analyse de référence pédagogique).
 model CallAnalysis {
   id                        String  @id @default(uuid())
   organizationId            String
@@ -396,6 +419,10 @@ model CallAnalysis {
   commercialStrategy        String? // JSON (bonnes pratiques retenues avec evidenceSegmentIds)
   ambiguities               String? // JSON: [{id, question, importance}]
   referenceSuitability      String? // JSON (justification du score)
+  // LOT Q3A : score global coaching (null si non calculé / indisponible)
+  overallScore              Int?
+  // LOT Q3A : JSON RealCallAnalysisResult (Zod) — null pour les appels modèle
+  coachingPayload           String?
   createdAt                 String
   updatedAt                 String
 
@@ -595,6 +622,24 @@ model SkillArticleMapping {
 
   @@unique([articleId, skillKey])
   @@index([organizationId, skillKey])
+}
+
+// LOT Q3B : mapping administrable exercice catalogue ↔ clé de compétence.
+// Sert uniquement à la recommandation déterministe depuis weakSkillKeys (appels réels).
+// organizationId = org catalogue plateforme. Archivage du scénario conserve les lignes.
+model ScenarioSkillMapping {
+  id             String @id @default(uuid())
+  organizationId String
+  scenarioId     String
+  skillKey       String
+  createdAt      String
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scenario     Scenario     @relation(fields: [scenarioId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@unique([scenarioId, skillKey])
+  @@index([organizationId, skillKey])
+  @@index([organizationId])
 }
 
 // ---------------------------------------------------------------------------

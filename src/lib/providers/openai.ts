@@ -8,6 +8,7 @@ import { CallType } from "../enums";
 import {
   EvaluationResultSchema,
   CallAnalysisResultSchema,
+  RealCallAnalysisResultSchema,
   ScenarioGenerationResultSchema,
   SpeakerAttributionSchema,
   AnonymizationSchema,
@@ -29,6 +30,8 @@ import type {
   AnonymizationResult,
   CallAnalysisProvider,
   CallAnalysisResult,
+  RealCallAnalysisProvider,
+  RealCallAnalysisResult,
   ScenarioGenerationProvider,
   ScenarioGenerationResult,
 } from "./types";
@@ -1038,6 +1041,146 @@ export class OpenAICallAnalysisProvider implements CallAnalysisProvider {
       logEvent: "analysis.completed",
     });
     return CallAnalysisResultSchema.parse(parsed);
+  }
+}
+
+// ---- LOT Q3A : analyse coaching d'un appel réel ----------------------------
+const REAL_CALL_ANALYSIS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "summary",
+    "overallScore",
+    "skillScores",
+    "keyMoments",
+    "dialoguePassages",
+    "why",
+    "metrics",
+    "weakSkillKeys",
+  ],
+  properties: {
+    summary: { type: "string" },
+    overallScore: { type: ["integer", "null"] },
+    skillScores: {
+      type: "array",
+      minItems: 1,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "key",
+          "label",
+          "score",
+          "maxScore",
+          "rationale",
+          "evidence",
+          "recommendation",
+        ],
+        properties: {
+          key: { type: "string" },
+          label: { type: "string" },
+          score: { type: "integer" },
+          maxScore: { type: "integer" },
+          rationale: { type: "string" },
+          evidence: { type: "string" },
+          recommendation: { type: "string" },
+        },
+      },
+    },
+    keyMoments: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["role", "quote", "atMs", "explanation"],
+        properties: {
+          role: { type: "string" },
+          quote: { type: "string" },
+          atMs: { type: "integer" },
+          explanation: { type: "string" },
+        },
+      },
+    },
+    dialoguePassages: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "role",
+          "atMs",
+          "content",
+          "explanation",
+          "suggestedReformulation",
+        ],
+        properties: {
+          role: { type: "string" },
+          atMs: { type: "integer" },
+          content: { type: "string" },
+          explanation: { type: "string" },
+          suggestedReformulation: { type: ["string", "null"] },
+        },
+      },
+    },
+    why: { type: "array", items: { type: "string" } },
+    metrics: {
+      type: "object",
+      additionalProperties: false,
+      required: ["talkRatio", "openQuestionsCount", "firstClosingAttemptMs"],
+      properties: {
+        talkRatio: { type: ["number", "null"] },
+        openQuestionsCount: { type: ["integer", "null"] },
+        firstClosingAttemptMs: { type: ["integer", "null"] },
+      },
+    },
+    weakSkillKeys: { type: "array", items: { type: "string" } },
+  },
+} as const;
+
+export class OpenAIRealCallAnalysisProvider implements RealCallAnalysisProvider {
+  async analyze(input: {
+    segments: Array<{
+      idx: number;
+      role: string;
+      text: string;
+      startMs: number;
+      endMs: number;
+    }>;
+    language: string;
+    seed: string;
+  }): Promise<RealCallAnalysisResult> {
+    const system = [
+      "Tu es un coach expert de la vente par téléphone.",
+      "Tu analyses un transcript d'appel RÉEL ANONYMISÉ.",
+      "Règles STRICTES :",
+      "- N'invente AUCUNE information absente du transcript.",
+      "- Si une métrique n'est pas mesurable, renvoie null (jamais 0 inventé).",
+      "- overallScore peut être null si tu ne peux pas le calculer fiablement.",
+      "- skillScores : clés stables snake/kebab-free (ex: decouverte, ecoute).",
+      "- weakSkillKeys : sous-ensemble des skillScores.key réellement faibles.",
+      "- dialoguePassages : contenu anonymisé uniquement.",
+      "- Réponds en " + (input.language === "fr" ? "français" : input.language) + ".",
+      "- Respecte STRICTEMENT le schéma JSON.",
+    ].join("\n");
+
+    const user = [
+      `Langue : ${input.language}`,
+      "Transcript anonymisé (idx | rôle | startMs | texte) :",
+      ...input.segments.map(
+        (s) => `${s.idx} | ${s.role} | ${s.startMs} | ${s.text}`,
+      ),
+    ].join("\n");
+
+    const parsed = await callResponsesApi({
+      model: serverConfig.models.analysis,
+      system,
+      user,
+      schemaName: "real_call_analysis",
+      schema: REAL_CALL_ANALYSIS_SCHEMA as unknown as Record<string, unknown>,
+      reasoningEffort: serverConfig.models.analysisReasoningEffort,
+      logEvent: "real_call_analysis.completed",
+    });
+    return RealCallAnalysisResultSchema.parse(parsed);
   }
 }
 

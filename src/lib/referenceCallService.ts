@@ -4,7 +4,7 @@ import { prisma } from "./db";
 import { nowIso } from "./utils";
 import { serverConfig } from "./config";
 import { log } from "./log";
-import { RecordingStatus, ScenarioStatus, CallType } from "./enums";
+import { RecordingStatus, ScenarioStatus, CallType, RecordingSource } from "./enums";
 import { enqueueJob } from "./jobs";
 import { JobType } from "./jobTypes";
 import {
@@ -12,6 +12,7 @@ import {
   getSpeakerAttributionProvider,
   getAnonymizationProvider,
   getCallAnalysisProvider,
+  getRealCallAnalysisProvider,
   getScenarioGenerationProvider,
   getAudioStorage,
 } from "./providers";
@@ -23,6 +24,9 @@ import type { CallAnalysisResult } from "./providers";
  *   PREPROCESS -> TRANSCRIBE (+ attribution locuteurs) -> ANALYZE (anonymise +
  *   analyse) -> GENERATE (scénario + grille).
  *
+ * LOT Q3A : pour un appel réel télépro (source=MANUAL_UPLOAD), le pipeline
+ * s'arrête après l'analyse coaching (jamais GENERATE_SCENARIO_FROM_CALL).
+ *
  * Chaque étape :
  * - écrit un statut métier clair (RecordingStatus) ;
  * - court-circuite si sa sortie existe déjà (rejouable après crash/retry) ;
@@ -31,7 +35,17 @@ import type { CallAnalysisResult } from "./providers";
  */
 
 const PROMPT_VERSION = "call2exercise-v1";
+const REAL_CALL_PROMPT_VERSION = "real-call-coaching-v1";
 
+/** Appel réel télépro (LOT Q3A) — jamais traité comme référence pédagogique. */
+export function isTeleproRealCall(rec: {
+  source: string | null;
+  teleproId: string | null;
+}): boolean {
+  return (
+    rec.source === RecordingSource.MANUAL_UPLOAD && rec.teleproId != null
+  );
+}
 async function setStatus(
   recordingId: string,
   organizationId: string,
@@ -290,8 +304,18 @@ export async function analyzeReferenceCall(
     return;
   }
 
-  // Court-circuit : analyse déjà faite et exploitable -> génération.
+  const realCall = isTeleproRealCall(rec);
+
+  // Court-circuit : analyse déjà faite.
+  // - appel modèle exploitable -> génération d'exercice ;
+  // - appel réel -> READY (jamais GENERATE).
   if (rec.analysis && rec.status !== RecordingStatus.WAITING_FOR_CLARIFICATION) {
+    if (realCall) {
+      if (rec.analysis.coachingPayload) {
+        await setStatus(recordingId, organizationId, RecordingStatus.READY);
+      }
+      return;
+    }
     if (rec.analysis.usable) {
       await enqueueJob({ organizationId, type: JobType.GENERATE_SCENARIO_FROM_CALL, targetId: recordingId });
     }
@@ -299,7 +323,7 @@ export async function analyzeReferenceCall(
   }
 
   await setStatus(recordingId, organizationId, RecordingStatus.ANALYZING);
-  log.info("recording.analysis_started", { organizationId, recordingId });
+  log.info("recording.analysis_started", { organizationId, recordingId, realCall });
 
   const turns = [...rec.transcript.turns].sort((a, b) => a.idx - b.idx);
 
@@ -329,7 +353,54 @@ export async function analyzeReferenceCall(
     }
   }
 
-  // 3b) Analyse structurée sur le texte anonymisé.
+  // LOT Q3A : branche coaching télépro (pas d'analyse de référence, pas GENERATE).
+  if (realCall) {
+    const coaching = await getRealCallAnalysisProvider().analyze({
+      segments: turns.map((t) => ({
+        idx: t.idx,
+        role: t.role ?? "PROSPECT",
+        text: t.anonymizedText ?? t.text,
+        startMs: t.startMs,
+        endMs: t.endMs,
+      })),
+      language: rec.transcript.language,
+      seed: rec.id,
+    });
+
+    await prisma.callAnalysis.upsert({
+      where: { recordingId: rec.id },
+      create: {
+        organizationId,
+        recordingId: rec.id,
+        usable: true,
+        language: rec.transcript.language,
+        model: serverConfig.models.analysis,
+        promptVersion: REAL_CALL_PROMPT_VERSION,
+        summary: coaching.summary,
+        overallScore: coaching.overallScore,
+        coachingPayload: JSON.stringify(coaching),
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+      },
+      update: {
+        summary: coaching.summary,
+        overallScore: coaching.overallScore,
+        coachingPayload: JSON.stringify(coaching),
+        promptVersion: REAL_CALL_PROMPT_VERSION,
+        updatedAt: nowIso(),
+      },
+    });
+
+    await setStatus(recordingId, organizationId, RecordingStatus.READY);
+    log.info("recording.real_call_analysis_completed", {
+      organizationId,
+      recordingId,
+      overallScore: coaching.overallScore,
+    });
+    return;
+  }
+
+  // 3b) Analyse structurée sur le texte anonymisé (appel modèle).
   const clarifications = parseJson<Record<string, string>>(rec.clarificationAnswers) ?? {};
   const analysis = await getCallAnalysisProvider().analyze({
     segments: turns.map((t) => ({
@@ -456,6 +527,16 @@ export async function generateScenarioFromCall(
     where: { id: recordingId, organizationId },
     include: { analysis: true },
   });
+
+  // LOT Q3A : un appel réel ne génère JAMAIS de scénario.
+  if (isTeleproRealCall(rec)) {
+    await setStatus(recordingId, organizationId, RecordingStatus.READY);
+    log.info("scenario.generation_skipped_real_call", {
+      organizationId,
+      recordingId,
+    });
+    return;
+  }
 
   // Idempotence : un exercice existe déjà pour cet appel -> READY.
   const existing = await prisma.scenario.findUnique({

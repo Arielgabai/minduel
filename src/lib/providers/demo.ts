@@ -21,10 +21,13 @@ import type {
   AnonymizationResult,
   CallAnalysisProvider,
   CallAnalysisResult,
+  RealCallAnalysisProvider,
+  RealCallAnalysisResult,
   ScenarioGenerationProvider,
   ScenarioGenerationResult,
 } from "./types";
 import { normalizeScenarioWeights } from "./openai";
+import { RealCallAnalysisResultSchema } from "./schemas";
 
 // ------------------------------------------------------------------
 // Transcription démo : génère un transcript diarisé plausible et
@@ -646,6 +649,149 @@ class DemoScenarioGenerationProvider implements ScenarioGenerationProvider {
   }
 }
 
+/**
+ * LOT Q3A : analyse coaching déterministe d'un appel réel (fixtures locales).
+ * Aucun réseau. Scores dérivés du transcript anonymisé fourni en entrée.
+ */
+class DemoRealCallAnalysisProvider implements RealCallAnalysisProvider {
+  async analyze(input: {
+    segments: Array<{
+      idx: number;
+      role: string;
+      text: string;
+      startMs: number;
+      endMs: number;
+    }>;
+    language: string;
+    seed: string;
+  }): Promise<RealCallAnalysisResult> {
+    const agentSegs = input.segments.filter((s) => s.role === "AGENT");
+    const prospectSegs = input.segments.filter((s) => s.role === "PROSPECT");
+    const agentChars = agentSegs.reduce((n, s) => n + s.text.length, 0);
+    const totalChars = Math.max(
+      1,
+      input.segments.reduce((n, s) => n + s.text.length, 0),
+    );
+    const talkRatio = Math.round((agentChars / totalChars) * 1000) / 1000;
+    const openQuestionsCount = agentSegs.filter((s) =>
+      /(comment|pourquoi|qu'est-ce|quel|quelle|combien|\?)/i.test(s.text),
+    ).length;
+    const closingSeg = agentSegs.find((s) =>
+      /(rendez-vous|jeudi|créneau|disponible|conclu|signer)/i.test(s.text),
+    );
+    const firstClosingAttemptMs =
+      closingSeg != null ? closingSeg.startMs : null;
+
+    const skills = [
+      {
+        key: "decouverte",
+        label: "Découverte",
+        maxScore: 20,
+        ok: openQuestionsCount >= 2,
+      },
+      {
+        key: "ecoute",
+        label: "Écoute active",
+        maxScore: 20,
+        ok: agentSegs.some((s) => /je comprends|effectivement/i.test(s.text)),
+      },
+      {
+        key: "argumentation",
+        label: "Argumentation",
+        maxScore: 20,
+        ok: agentSegs.some((s) =>
+          /(économi|réduire|bénéfice|avantage)/i.test(s.text),
+        ),
+      },
+      {
+        key: "objections",
+        label: "Traitement des objections",
+        maxScore: 20,
+        ok: prospectSegs.length > 0 && agentSegs.length > 1,
+      },
+      {
+        key: "conclusion",
+        label: "Conclusion",
+        maxScore: 20,
+        ok: firstClosingAttemptMs != null,
+      },
+    ];
+
+    const skillScores = skills.map((s) => {
+      const score = s.ok ? Math.round(s.maxScore * 0.8) : Math.round(s.maxScore * 0.4);
+      return {
+        key: s.key,
+        label: s.label,
+        score,
+        maxScore: s.maxScore,
+        rationale: s.ok
+          ? `${s.label} : signaux favorables détectés dans l'échange.`
+          : `${s.label} : signaux insuffisants dans cet appel.`,
+        evidence: (s.ok ? agentSegs : prospectSegs)[0]?.text?.slice(0, 160) ?? "",
+        recommendation: s.ok
+          ? `Consolider ${s.label.toLowerCase()} sur les prochains appels.`
+          : `Travailler ${s.label.toLowerCase()} via un exercice ciblé.`,
+      };
+    });
+
+    const overallScore = Math.min(
+      100,
+      skillScores.reduce((n, s) => n + s.score, 0),
+    );
+    const weakSkillKeys = skillScores
+      .filter((s) => s.maxScore > 0 && s.score / s.maxScore < 0.6)
+      .map((s) => s.key)
+      .sort();
+
+    const keyMoments = input.segments.slice(0, 3).map((s) => ({
+      role: s.role,
+      quote: s.text.slice(0, 180),
+      atMs: s.startMs,
+      explanation: "Moment structurant de l'échange (démo déterministe).",
+    }));
+
+    const dialoguePassages = input.segments.slice(0, 6).map((s) => ({
+      role: s.role,
+      atMs: s.startMs,
+      content: s.text,
+      explanation:
+        s.role === "AGENT"
+          ? "Tour commercial analysé."
+          : "Tour prospect analysé.",
+      suggestedReformulation:
+        s.role === "AGENT" && s.text.length > 40
+          ? "Reformuler plus brièvement en ancrant un bénéfice client."
+          : null,
+    }));
+
+    const result: RealCallAnalysisResult = {
+      summary:
+        overallScore >= 70
+          ? "Appel réel structuré, avec des axes de progression ciblés."
+          : "Appel réel à renforcer sur la découverte et la conclusion.",
+      overallScore,
+      skillScores,
+      keyMoments,
+      dialoguePassages,
+      why: [
+        weakSkillKeys.length > 0
+          ? `Faiblesses détectées : ${weakSkillKeys.join(", ")}.`
+          : "Aucune faiblesse majeure détectée sur les compétences suivies.",
+        firstClosingAttemptMs != null
+          ? "Une tentative de closing a été identifiée."
+          : "Aucune tentative de closing claire n'a été détectée.",
+      ],
+      metrics: {
+        talkRatio,
+        openQuestionsCount,
+        firstClosingAttemptMs,
+      },
+      weakSkillKeys,
+    };
+    return RealCallAnalysisResultSchema.parse(result);
+  }
+}
+
 export const demoTranscription = new DemoTranscriptionProvider();
 export const demoKnowledgeExtraction = new DemoKnowledgeExtractionProvider();
 export const demoRealtime = new DemoRealtimeSessionProvider();
@@ -655,3 +801,4 @@ export const demoSpeakerAttribution = new DemoSpeakerAttributionProvider();
 export const demoAnonymization = new DemoAnonymizationProvider();
 export const demoCallAnalysis = new DemoCallAnalysisProvider();
 export const demoScenarioGeneration = new DemoScenarioGenerationProvider();
+export const demoRealCallAnalysis = new DemoRealCallAnalysisProvider();
