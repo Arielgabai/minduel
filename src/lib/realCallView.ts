@@ -20,7 +20,7 @@ export type RealCallListItem = {
   title: string;
   status: string;
   statusLabel: string;
-  statusTone: "ready" | "processing" | "failed" | "pending";
+  statusTone: "ready" | "processing" | "failed" | "pending" | "cancelled";
   source: string;
   createdAt: string;
   updatedAt: string;
@@ -75,6 +75,10 @@ export function realCallStatusLabel(status: string): string {
       return "Analysé";
     case RecordingStatus.FAILED:
       return "Échec";
+    case RecordingStatus.CANCEL_REQUESTED:
+      return "Arrêt en cours";
+    case RecordingStatus.CANCELLED:
+      return "Analyse arrêtée";
     default:
       return status;
   }
@@ -86,6 +90,8 @@ export function realCallStatusTone(
   if (status === RecordingStatus.READY) return "ready";
   if (status === RecordingStatus.FAILED) return "failed";
   if (status === RecordingStatus.PENDING_UPLOAD) return "pending";
+  if (status === RecordingStatus.CANCELLED) return "cancelled";
+  if (status === RecordingStatus.CANCEL_REQUESTED) return "processing";
   return "processing";
 }
 

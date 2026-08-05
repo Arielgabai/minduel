@@ -263,6 +263,11 @@ model CallRecording {
   source                    String?
   // LOT Q3A : horodatage serveur de la confirmation de droit (jamais fourni par le client).
   consentConfirmedAt        String?
+  // LOT Q3C : intention d'upload client (UUID). Null = historique / legacy.
+  uploadAttemptId           String?
+  // LOT Q3C : horodatages d'annulation (null = jamais demandé / jamais confirmé).
+  cancelRequestedAt         String?
+  cancelledAt               String?
   title                     String
   campaign                  String?
   callOutcome               String? // VENTE | REFUS | RAPPEL | RDV | AUTRE
@@ -284,6 +289,7 @@ model CallRecording {
   // Statut métier du pipeline (voir RecordingStatus dans src/lib/enums.ts) :
   // PENDING_UPLOAD | UPLOADED | PREPROCESSING | TRANSCRIBING | ANALYZING
   // | WAITING_FOR_CLARIFICATION | GENERATING_EXERCISE | REVIEW_REQUIRED | READY | FAILED
+  // | CANCEL_REQUESTED | CANCELLED (LOT Q3C, appels réels télépro)
   status                    String   @default("UPLOADED")
   errorMessage              String?
   // Résultats détectés (surfacés dans la liste manager, remplis par le pipeline)
@@ -309,6 +315,7 @@ model CallRecording {
   generatedScenario Scenario?       @relation("ScenarioSourceRecording")
   knowledgeItems    KnowledgeItem[]
 
+  @@unique([organizationId, teleproId, uploadAttemptId])
   @@index([organizationId])
   @@index([status])
   @@index([teleproId])

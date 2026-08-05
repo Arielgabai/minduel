@@ -46,14 +46,83 @@ export function isTeleproRealCall(rec: {
     rec.source === RecordingSource.MANUAL_UPLOAD && rec.teleproId != null
   );
 }
+
+function isCancelStatus(status: string): boolean {
+  return (
+    status === RecordingStatus.CANCEL_REQUESTED ||
+    status === RecordingStatus.CANCELLED
+  );
+}
+
+/**
+ * LOT Q3C — converge un appel réel annulé vers CANCELLED et empêche toute écriture READY.
+ * Retourne true si le pipeline doit s'arrêter immédiatement.
+ */
+export async function abortRealCallIfCancelled(
+  recordingId: string,
+  organizationId: string,
+): Promise<boolean> {
+  const rec = await prisma.callRecording.findFirst({
+    where: { id: recordingId, organizationId },
+    select: { status: true, source: true, teleproId: true },
+  });
+  if (!rec || !isTeleproRealCall(rec) || !isCancelStatus(rec.status)) {
+    return false;
+  }
+  const now = nowIso();
+  await prisma.callRecording.updateMany({
+    where: {
+      id: recordingId,
+      organizationId,
+      status: {
+        in: [
+          RecordingStatus.CANCEL_REQUESTED,
+          RecordingStatus.CANCELLED,
+        ],
+      },
+    },
+    data: {
+      status: RecordingStatus.CANCELLED,
+      cancelledAt: now,
+      errorMessage: null,
+      updatedAt: now,
+    },
+  });
+  await prisma.processingJob.updateMany({
+    where: {
+      organizationId,
+      targetId: recordingId,
+      status: "PENDING",
+    },
+    data: {
+      status: "FAILED_PERMANENT",
+      lastError: "cancelled_by_user",
+      lockedAt: null,
+      lockedBy: null,
+    },
+  });
+  log.info("recording.real_call_cancelled", { organizationId, recordingId });
+  return true;
+}
+
 async function setStatus(
   recordingId: string,
   organizationId: string,
   status: string,
   extra: Record<string, unknown> = {},
 ): Promise<void> {
+  // LOT Q3C : l'annulation gagne toujours sur READY / étapes intermédiaires.
   await prisma.callRecording.updateMany({
-    where: { id: recordingId, organizationId },
+    where: {
+      id: recordingId,
+      organizationId,
+      status: {
+        notIn: [
+          RecordingStatus.CANCEL_REQUESTED,
+          RecordingStatus.CANCELLED,
+        ],
+      },
+    },
     data: { status, updatedAt: nowIso(), ...extra },
   });
 }
@@ -69,9 +138,11 @@ export async function preprocessRecording(
     where: { id: recordingId, organizationId },
   });
   if (rec.status === RecordingStatus.READY) return;
+  if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
 
   log.info("recording.preprocessing_started", { organizationId, recordingId });
   await setStatus(recordingId, organizationId, RecordingStatus.PREPROCESSING);
+  if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
 
   if (!rec.storageKey) {
     await markRecordingFailed(recordingId, organizationId, "Aucun fichier audio associé.");
@@ -98,7 +169,16 @@ export async function preprocessRecording(
   const meta = await probeAudio(bytes).catch(() => null);
   if (meta) {
     await prisma.callRecording.updateMany({
-      where: { id: recordingId, organizationId },
+      where: {
+        id: recordingId,
+        organizationId,
+        status: {
+          notIn: [
+            RecordingStatus.CANCEL_REQUESTED,
+            RecordingStatus.CANCELLED,
+          ],
+        },
+      },
       data: {
         audioChannels: meta.channels ?? null,
         audioSampleRate: meta.sampleRate ?? null,
@@ -109,6 +189,8 @@ export async function preprocessRecording(
       },
     });
   }
+
+  if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
 
   // La transcription est coûteuse (audio complet renvoyé à chaque essai) :
   // on borne strictement à `transcribeMaxAttempts` (défaut : 2). Au-delà,
@@ -139,14 +221,17 @@ export async function transcribeRecording(
     include: { transcript: { include: { turns: true } } },
   });
   if (rec.status === RecordingStatus.READY) return;
+  if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
 
   // Court-circuit : transcript + attribution déjà faits -> passer à l'analyse.
   if (rec.transcript && rec.transcript.commercialSpeakerId) {
+    if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
     await enqueueJob({ organizationId, type: JobType.ANALYZE_REFERENCE_CALL, targetId: recordingId });
     return;
   }
 
   await setStatus(recordingId, organizationId, RecordingStatus.TRANSCRIBING);
+  if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
   log.info("recording.transcription_started", { organizationId, recordingId });
 
   // 2a) Transcription (idempotente : ne recrée pas un transcript existant).
@@ -158,6 +243,7 @@ export async function transcribeRecording(
       mimeType: rec.mimeType,
       seed: rec.id,
     });
+    if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
     transcript = await prisma.transcript.create({
       data: {
         recordingId: rec.id,
@@ -195,6 +281,8 @@ export async function transcribeRecording(
     });
   }
 
+  if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
+
   const turns = [...transcript.turns].sort((a, b) => a.idx - b.idx);
   const diarized = turns.map((t) => ({
     speakerId: t.speakerId,
@@ -223,6 +311,7 @@ export async function transcribeRecording(
       language: transcript.language,
       seed: rec.id,
     });
+    if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
     commercialSpeakerId = attribution.commercialSpeakerId;
     customerSpeakerId = attribution.customerSpeakerId;
     confidence = attribution.confidence;
@@ -233,7 +322,16 @@ export async function transcribeRecording(
       // Confiance insuffisante -> demander au manager quel locuteur est le commercial.
       const speakers = uniqueSpeakerSamples(diarized);
       await prisma.callRecording.updateMany({
-        where: { id: recordingId, organizationId },
+        where: {
+          id: recordingId,
+          organizationId,
+          status: {
+            notIn: [
+              RecordingStatus.CANCEL_REQUESTED,
+              RecordingStatus.CANCELLED,
+            ],
+          },
+        },
         data: {
           status: RecordingStatus.WAITING_FOR_CLARIFICATION,
           clarificationQuestions: JSON.stringify([
@@ -268,6 +366,8 @@ export async function transcribeRecording(
     }
   }
 
+  if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
+
   await applySpeakerRoles(transcript.id, commercialSpeakerId, customerSpeakerId, diarized);
   await prisma.transcript.update({
     where: { id: transcript.id },
@@ -284,6 +384,7 @@ export async function transcribeRecording(
     confidence,
   });
 
+  if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
   await enqueueJob({ organizationId, type: JobType.ANALYZE_REFERENCE_CALL, targetId: recordingId });
 }
 
@@ -299,6 +400,7 @@ export async function analyzeReferenceCall(
     include: { transcript: { include: { turns: true } }, analysis: true },
   });
   if (rec.status === RecordingStatus.READY) return;
+  if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
   if (!rec.transcript) {
     await enqueueJob({ organizationId, type: JobType.TRANSCRIBE_RECORDING, targetId: recordingId, maxAttempts: serverConfig.worker.transcribeMaxAttempts });
     return;
@@ -312,6 +414,7 @@ export async function analyzeReferenceCall(
   if (rec.analysis && rec.status !== RecordingStatus.WAITING_FOR_CLARIFICATION) {
     if (realCall) {
       if (rec.analysis.coachingPayload) {
+        if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
         await setStatus(recordingId, organizationId, RecordingStatus.READY);
       }
       return;
@@ -323,6 +426,7 @@ export async function analyzeReferenceCall(
   }
 
   await setStatus(recordingId, organizationId, RecordingStatus.ANALYZING);
+  if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
   log.info("recording.analysis_started", { organizationId, recordingId, realCall });
 
   const turns = [...rec.transcript.turns].sort((a, b) => a.idx - b.idx);
@@ -340,6 +444,7 @@ export async function analyzeReferenceCall(
       language: rec.transcript.language,
       seed: rec.id,
     });
+    if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
     const byIdx = new Map(anon.segments.map((s) => [s.idx, s.anonymizedText]));
     for (const t of turns) {
       const at = byIdx.get(t.idx);
@@ -352,6 +457,8 @@ export async function analyzeReferenceCall(
       }
     }
   }
+
+  if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
 
   // LOT Q3A : branche coaching télépro (pas d'analyse de référence, pas GENERATE).
   if (realCall) {
@@ -366,6 +473,9 @@ export async function analyzeReferenceCall(
       language: rec.transcript.language,
       seed: rec.id,
     });
+
+    // LOT Q3C : résultat provider ignoré si annulation entre-temps.
+    if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
 
     await prisma.callAnalysis.upsert({
       where: { recordingId: rec.id },
@@ -391,6 +501,7 @@ export async function analyzeReferenceCall(
       },
     });
 
+    if (await abortRealCallIfCancelled(recordingId, organizationId)) return;
     await setStatus(recordingId, organizationId, RecordingStatus.READY);
     log.info("recording.real_call_analysis_completed", {
       organizationId,
@@ -624,8 +735,39 @@ export async function markRecordingFailed(
   organizationId: string,
   message: string,
 ): Promise<void> {
+  // LOT Q3C : annulation gagne — ne jamais écraser CANCEL_* en FAILED.
+  const cancelled = await prisma.callRecording.updateMany({
+    where: {
+      id: recordingId,
+      organizationId,
+      status: RecordingStatus.CANCEL_REQUESTED,
+    },
+    data: {
+      status: RecordingStatus.CANCELLED,
+      cancelledAt: nowIso(),
+      errorMessage: null,
+      updatedAt: nowIso(),
+    },
+  });
+  if (cancelled.count > 0) {
+    log.info("recording.real_call_cancelled_on_failure", {
+      organizationId,
+      recordingId,
+    });
+    return;
+  }
+
   await prisma.callRecording.updateMany({
-    where: { id: recordingId, organizationId },
+    where: {
+      id: recordingId,
+      organizationId,
+      status: {
+        notIn: [
+          RecordingStatus.CANCEL_REQUESTED,
+          RecordingStatus.CANCELLED,
+        ],
+      },
+    },
     data: {
       status: RecordingStatus.FAILED,
       errorMessage: message.slice(0, 300),

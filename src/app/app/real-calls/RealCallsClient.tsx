@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card } from "@/components/ui";
+import { RecordingStatus } from "@/lib/enums";
 import { cx, formatDateTimeFr, formatDuration, formatBytes } from "@/lib/utils";
 
 type RealCallListItem = {
@@ -11,7 +12,7 @@ type RealCallListItem = {
   title: string;
   status: string;
   statusLabel: string;
-  statusTone: "ready" | "processing" | "failed" | "pending";
+  statusTone: "ready" | "processing" | "failed" | "pending" | "cancelled";
   source: string;
   createdAt: string;
   updatedAt: string;
@@ -34,10 +35,17 @@ type PrepareResponse = {
   uploadMode: "presigned" | "direct";
   uploadUrl: string | null;
   expiresAt: string;
+  alreadyAccepted?: boolean;
 };
 
 const CONSENT_LABEL =
   "Je confirme être autorisé à importer et analyser cet enregistrement.";
+
+const CANCEL_CONFIRM =
+  "Arrêter cette analyse ? L'étape actuellement envoyée au fournisseur peut encore se terminer, mais son résultat ne sera pas conservé.";
+
+const DELETE_CONFIRM =
+  "Supprimer définitivement cet appel, son audio, son transcript et son analyse ?";
 
 const fieldClass =
   "w-full min-h-11 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-white/30 focus:border-violet-500/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric-400";
@@ -52,10 +60,19 @@ function statusBadgeTone(
       return "red";
     case "pending":
       return "flame";
+    case "cancelled":
+      return "gray";
     case "processing":
     default:
       return "blue";
   }
+}
+
+function newAttemptId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return "00000000-0000-4000-8000-000000000000";
 }
 
 async function readApiError(res: Response): Promise<string> {
@@ -70,25 +87,51 @@ async function readApiError(res: Response): Promise<string> {
   }
 }
 
+function isActiveProcessing(status: string): boolean {
+  return (
+    status === RecordingStatus.UPLOADED ||
+    status === RecordingStatus.PREPROCESSING ||
+    status === RecordingStatus.TRANSCRIBING ||
+    status === RecordingStatus.ANALYZING ||
+    status === RecordingStatus.WAITING_FOR_CLARIFICATION ||
+    status === RecordingStatus.GENERATING_EXERCISE
+  );
+}
+
+function isDeletable(status: string): boolean {
+  return (
+    status === RecordingStatus.PENDING_UPLOAD ||
+    status === RecordingStatus.READY ||
+    status === RecordingStatus.FAILED ||
+    status === RecordingStatus.CANCELLED
+  );
+}
+
 export function RealCallsClient({
   initialItems,
   maxUploadMb,
 }: {
   initialItems: RealCallListItem[];
-  /** Conservé pour compat page serveur ; le libellé UI est fixe (spec Q3B). */
   rightsConfirmationText?: string;
   maxUploadMb: number;
 }) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadInFlightRef = useRef(false);
+  const uploadAttemptIdRef = useRef<string | null>(null);
+  const recordingIdRef = useRef<string | null>(null);
+  const acceptedRef = useRef(false);
+  const fileFingerprintRef = useRef<string | null>(null);
 
+  const [items, setItems] = useState(initialItems);
   const [showImport, setShowImport] = useState(false);
   const [title, setTitle] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [consent, setConsent] = useState(false);
   const [uploadPhase, setUploadPhase] = useState<UploadPhase>(null);
   const [error, setError] = useState<string | null>(null);
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const uploading = uploadPhase !== null;
   const canSubmit =
@@ -106,8 +149,45 @@ export function RealCallsClient({
       setError("Seuls les fichiers MP3 sont acceptés.");
       return;
     }
+    const fingerprint = `${next.name}:${next.size}:${next.lastModified}`;
+    if (fileFingerprintRef.current !== fingerprint) {
+      uploadAttemptIdRef.current = null;
+      recordingIdRef.current = null;
+      acceptedRef.current = false;
+      fileFingerprintRef.current = fingerprint;
+    }
     setFile(next);
     setError(null);
+  }
+
+  async function recoverAccepted(id: string): Promise<boolean> {
+    try {
+      const res = await fetch(`/api/real-calls/${id}`);
+      if (!res.ok) return false;
+      const json = await res.json();
+      const status = (json?.data as { status?: string } | undefined)?.status;
+      if (!status || status === RecordingStatus.PENDING_UPLOAD) return false;
+      acceptedRef.current = true;
+      setUploadPhase("analyse en arrière-plan");
+      router.push(`/app/real-calls/${id}`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function finalizePresigned(id: string): Promise<boolean> {
+    const finalizeRes = await fetch(`/api/real-calls/${id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "finalize" }),
+    });
+    if (!finalizeRes.ok) {
+      setError(await readApiError(finalizeRes));
+      setUploadPhase(null);
+      return false;
+    }
+    return true;
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -115,10 +195,16 @@ export function RealCallsClient({
     if (!canSubmit || !file || uploadInFlightRef.current) return;
 
     uploadInFlightRef.current = true;
+    acceptedRef.current = false;
     setError(null);
     setUploadPhase("préparation");
 
     try {
+      if (!uploadAttemptIdRef.current) {
+        uploadAttemptIdRef.current = newAttemptId();
+      }
+      const uploadAttemptId = uploadAttemptIdRef.current;
+
       const prepareRes = await fetch("/api/real-calls", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -128,6 +214,7 @@ export function RealCallsClient({
           mimeType: file.type || "audio/mpeg",
           sizeBytes: file.size,
           title: title.trim(),
+          uploadAttemptId,
         }),
       });
 
@@ -137,9 +224,25 @@ export function RealCallsClient({
         return;
       }
 
-      const prepareJson = await prepareRes.json();
-      const prepared = prepareJson.data as PrepareResponse;
-      const { id, uploadMode, uploadUrl } = prepared;
+      let prepared: PrepareResponse;
+      try {
+        const prepareJson = await prepareRes.json();
+        prepared = prepareJson.data as PrepareResponse;
+      } catch {
+        setError("Réponse d'initialisation illisible.");
+        setUploadPhase(null);
+        return;
+      }
+
+      const { id, uploadMode, uploadUrl, alreadyAccepted } = prepared;
+      recordingIdRef.current = id;
+
+      if (alreadyAccepted) {
+        acceptedRef.current = true;
+        setUploadPhase("analyse en arrière-plan");
+        router.push(`/app/real-calls/${id}`);
+        return;
+      }
 
       setUploadPhase("envoi");
 
@@ -149,53 +252,151 @@ export function RealCallsClient({
           setUploadPhase(null);
           return;
         }
-        const putRes = await fetch(uploadUrl, {
-          method: "PUT",
-          headers: { "Content-Type": file.type || "audio/mpeg" },
-          body: file,
-        });
-        if (!putRes.ok) {
-          setError("Échec de l'envoi du fichier.");
-          setUploadPhase(null);
-          return;
+        let putOk = false;
+        try {
+          const putRes = await fetch(uploadUrl, {
+            method: "PUT",
+            headers: { "Content-Type": file.type || "audio/mpeg" },
+            body: file,
+          });
+          putOk = putRes.ok;
+          if (!putOk) {
+            setError("Échec de l'envoi du fichier.");
+            setUploadPhase(null);
+            return;
+          }
+        } catch {
+          // PUT potentiellement envoyé : finalisation de vérification via head serveur.
+          setUploadPhase("finalisation");
+          try {
+            const recovered = await finalizePresigned(id);
+            if (!recovered) return;
+            acceptedRef.current = true;
+            setUploadPhase("analyse en arrière-plan");
+            router.push(`/app/real-calls/${id}`);
+            return;
+          } catch {
+            if (await recoverAccepted(id)) return;
+            setError("Échec de l'envoi du fichier.");
+            setUploadPhase(null);
+            return;
+          }
         }
-      }
 
-      setUploadPhase("finalisation");
-
-      if (uploadMode === "direct") {
-        const fd = new FormData();
-        fd.append("action", "finalize");
-        fd.append("file", file);
-        const finalizeRes = await fetch(`/api/real-calls/${id}`, {
-          method: "POST",
-          body: fd,
-        });
-        if (!finalizeRes.ok) {
-          setError(await readApiError(finalizeRes));
+        setUploadPhase("finalisation");
+        try {
+          const okFinalize = await finalizePresigned(id);
+          if (!okFinalize) {
+            if (await recoverAccepted(id)) return;
+            return;
+          }
+        } catch {
+          if (await recoverAccepted(id)) return;
+          setError("Finalisation interrompue. Vérifiez l'état de l'appel.");
           setUploadPhase(null);
           return;
         }
       } else {
-        const finalizeRes = await fetch(`/api/real-calls/${id}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "finalize" }),
-        });
-        if (!finalizeRes.ok) {
-          setError(await readApiError(finalizeRes));
+        setUploadPhase("finalisation");
+        try {
+          const fd = new FormData();
+          fd.append("action", "finalize");
+          fd.append("file", file);
+          const finalizeRes = await fetch(`/api/real-calls/${id}`, {
+            method: "POST",
+            body: fd,
+          });
+          if (!finalizeRes.ok) {
+            if (await recoverAccepted(id)) return;
+            setError(await readApiError(finalizeRes));
+            setUploadPhase(null);
+            return;
+          }
+        } catch {
+          if (await recoverAccepted(id)) return;
+          setError("Finalisation interrompue. Vérifiez l'état de l'appel.");
           setUploadPhase(null);
           return;
         }
       }
 
+      acceptedRef.current = true;
       setUploadPhase("analyse en arrière-plan");
       router.push(`/app/real-calls/${id}`);
     } catch {
+      if (acceptedRef.current && recordingIdRef.current) {
+        router.push(`/app/real-calls/${recordingIdRef.current}`);
+        return;
+      }
+      if (recordingIdRef.current && (await recoverAccepted(recordingIdRef.current))) {
+        return;
+      }
       setError("Erreur réseau.");
       setUploadPhase(null);
     } finally {
       uploadInFlightRef.current = false;
+    }
+  }
+
+  async function onCancel(item: RealCallListItem) {
+    if (actionBusyId) return;
+    if (!window.confirm(CANCEL_CONFIRM)) return;
+    setActionBusyId(item.id);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/real-calls/${item.id}/cancel`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        setActionError(await readApiError(res));
+        return;
+      }
+      const json = await res.json();
+      const status = (json?.data as { status?: string })?.status ?? item.status;
+      setItems((prev) =>
+        prev.map((row) =>
+          row.id === item.id
+            ? {
+                ...row,
+                status,
+                statusLabel:
+                  status === RecordingStatus.CANCELLED
+                    ? "Analyse arrêtée"
+                    : status === RecordingStatus.CANCEL_REQUESTED
+                      ? "Arrêt en cours"
+                      : row.statusLabel,
+                statusTone:
+                  status === RecordingStatus.CANCELLED
+                    ? "cancelled"
+                    : "processing",
+                errorMessage: null,
+              }
+            : row,
+        ),
+      );
+    } catch {
+      setActionError("Impossible d'arrêter l'analyse.");
+    } finally {
+      setActionBusyId(null);
+    }
+  }
+
+  async function onDelete(item: RealCallListItem) {
+    if (actionBusyId) return;
+    if (!window.confirm(DELETE_CONFIRM)) return;
+    setActionBusyId(item.id);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/real-calls/${item.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        setActionError(await readApiError(res));
+        return;
+      }
+      setItems((prev) => prev.filter((row) => row.id !== item.id));
+    } catch {
+      setActionError("Impossible de supprimer cet appel.");
+    } finally {
+      setActionBusyId(null);
     }
   }
 
@@ -284,7 +485,9 @@ export function RealCallsClient({
 
             {uploadPhase ? (
               <p className="text-sm font-medium text-electric-400" aria-live="polite">
-                {uploadPhase.charAt(0).toUpperCase() + uploadPhase.slice(1)}…
+                {uploadPhase === "analyse en arrière-plan"
+                  ? "Analyse lancée en arrière-plan…"
+                  : `${uploadPhase.charAt(0).toUpperCase()}${uploadPhase.slice(1)}…`}
               </p>
             ) : null}
 
@@ -305,7 +508,13 @@ export function RealCallsClient({
         </Card>
       ) : null}
 
-      {initialItems.length === 0 ? (
+      {actionError ? (
+        <p className="mb-3 text-sm text-red-300" role="alert">
+          {actionError}
+        </p>
+      ) : null}
+
+      {items.length === 0 ? (
         <Card className="text-center">
           <p className="text-sm text-white/55">
             Aucun appel importé pour le moment.
@@ -324,11 +533,11 @@ export function RealCallsClient({
         </Card>
       ) : (
         <ul className="space-y-3">
-          {initialItems.map((item) => (
-            <li key={item.id}>
+          {items.map((item) => (
+            <li key={item.id} className="card flex flex-col gap-3 p-4">
               <Link
                 href={`/app/real-calls/${item.id}`}
-                className="card card-hover flex min-h-11 flex-col gap-2 p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric-400"
+                className="flex min-h-11 flex-col gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric-400"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -358,6 +567,43 @@ export function RealCallsClient({
                   </p>
                 ) : null}
               </Link>
+
+              <div className="flex flex-col gap-2">
+                {isActiveProcessing(item.status) ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11 w-full"
+                    disabled={actionBusyId === item.id}
+                    onClick={() => void onCancel(item)}
+                  >
+                    {actionBusyId === item.id
+                      ? "Arrêt…"
+                      : "Arrêter l'analyse"}
+                  </Button>
+                ) : null}
+                {item.status === RecordingStatus.CANCEL_REQUESTED ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11 w-full"
+                    disabled
+                  >
+                    Arrêt en cours…
+                  </Button>
+                ) : null}
+                {isDeletable(item.status) ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11 w-full"
+                    disabled={actionBusyId === item.id}
+                    onClick={() => void onDelete(item)}
+                  >
+                    {actionBusyId === item.id ? "Suppression…" : "Supprimer"}
+                  </Button>
+                ) : null}
+              </div>
             </li>
           ))}
         </ul>

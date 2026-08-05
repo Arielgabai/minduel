@@ -472,13 +472,20 @@ describe("Q3A — service prepare/finalize/retry (mocks locaux)", () => {
     user.findFirst.mockResolvedValue({ id: TELEPRO });
 
     vi.doMock("@/lib/db", () => ({
-      prisma: { callRecording, user },
+      prisma: {
+        callRecording,
+        user,
+        $transaction: vi.fn(async (fn: (tx: { callRecording: typeof callRecording }) => unknown) =>
+          fn({ callRecording }),
+        ),
+      },
     }));
     vi.doMock("@/lib/audit", () => ({
       logAudit: vi.fn(async () => undefined),
     }));
     vi.doMock("@/lib/jobs", () => ({
       enqueueJob: vi.fn(async () => ({ id: "job-1" })),
+      ensureProcessingJobExists: vi.fn(async () => ({ created: true })),
       resetJobsForTarget: vi.fn(async () => 1),
       JobType: {
         PREPROCESS_RECORDING: "PREPROCESS_RECORDING",
@@ -532,6 +539,7 @@ describe("Q3A — service prepare/finalize/retry (mocks locaux)", () => {
         fileName: "a.mp3",
         mimeType: "audio/mpeg",
         sizeBytes: 1000,
+        uploadAttemptId: "11111111-1111-4111-8111-111111111111",
       }),
     ).rejects.toMatchObject({ status: 400 });
   });
@@ -544,6 +552,7 @@ describe("Q3A — service prepare/finalize/retry (mocks locaux)", () => {
         fileName: "a.wav",
         mimeType: "audio/wav",
         sizeBytes: 1000,
+        uploadAttemptId: "11111111-1111-4111-8111-111111111111",
       }),
     ).rejects.toMatchObject({ status: 415 });
   });
@@ -556,11 +565,13 @@ describe("Q3A — service prepare/finalize/retry (mocks locaux)", () => {
         fileName: "a.mp3",
         mimeType: "audio/mpeg",
         sizeBytes: 999_999_999_999,
+        uploadAttemptId: "11111111-1111-4111-8111-111111111111",
       }),
     ).rejects.toMatchObject({ status: 413 });
   });
 
   it("prepare crée un PENDING_UPLOAD useAsModel=false + consentConfirmedAt serveur", async () => {
+    callRecording.findFirst.mockResolvedValue(null);
     callRecording.create.mockResolvedValue({});
     const { prepareRealCallUpload } = await import("@/lib/realCallService");
     const forged = "2000-01-01T00:00:00.000Z";
@@ -571,6 +582,7 @@ describe("Q3A — service prepare/finalize/retry (mocks locaux)", () => {
       mimeType: "audio/mpeg",
       sizeBytes: 2048,
       consentConfirmedAt: forged,
+      uploadAttemptId: "22222222-2222-4222-8222-222222222222",
     });
     const after = Date.now();
     expect(res.status).toBe(RecordingStatus.PENDING_UPLOAD);
@@ -581,6 +593,7 @@ describe("Q3A — service prepare/finalize/retry (mocks locaux)", () => {
     expect(data.source).toBe(RecordingSource.MANUAL_UPLOAD);
     expect(data.useAsModel).toBe(false);
     expect(data.consent).toBe(true);
+    expect(data.uploadAttemptId).toBe("22222222-2222-4222-8222-222222222222");
     expect(data.consentAt).toBeTruthy();
     expect(data.consentConfirmedAt).toBeTruthy();
     expect(data.consentConfirmedAt).not.toBe(forged);
@@ -605,6 +618,7 @@ describe("Q3A — service prepare/finalize/retry (mocks locaux)", () => {
           fileName: "a.mp3",
           mimeType: "audio/mpeg",
           sizeBytes: 1000,
+          uploadAttemptId: "33333333-3333-4333-8333-333333333333",
         },
       ),
     ).rejects.toMatchObject({ status: 404 });
@@ -641,8 +655,8 @@ describe("Q3A — service prepare/finalize/retry (mocks locaux)", () => {
       fileMimeType: "audio/mpeg",
     });
     expect(res.jobEnqueued).toBe(true);
-    expect(jobs.enqueueJob).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(jobs.enqueueJob).mock.calls[0]![0].type).toBe(
+    expect(jobs.ensureProcessingJobExists).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(jobs.ensureProcessingJobExists).mock.calls[0]![0].type).toBe(
       "PREPROCESS_RECORDING",
     );
   });
